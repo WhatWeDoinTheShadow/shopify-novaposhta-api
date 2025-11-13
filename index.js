@@ -1,8 +1,8 @@
 import express from "express";
 import axios from "axios";
 import bwipjs from "bwip-js";
-import { PDFDocument } from "pdf-lib";
-import * as fontkit from "fontkit"; // ✅ правильний імпорт без default
+import { PDFDocument, rgb } from "pdf-lib";
+import * as fontkit from "fontkit";
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
@@ -11,7 +11,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 🧠 Відлов помилок
+// 🧠 Глобальні логери
 process.on("unhandledRejection", (reason) => console.error("⚠️ Unhandled Rejection:", reason));
 process.on("uncaughtException", (err) => console.error("🔥 Uncaught Exception:", err));
 
@@ -23,14 +23,16 @@ app.get("/", (req, res) => {
 // ✅ Створення ТТН
 app.post("/api/np-handler", async (req, res) => {
   const order = req.body;
+  console.log("📦 Отримано замовлення Shopify:", order.name);
 
   if (!process.env.NP_API_KEY) {
     return res.status(500).json({ error: "❌ NP_API_KEY is missing on server" });
   }
 
-  const SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626";
-  const SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d";
-  const SENDER_REF = "6bcb6d88-16de-11ef-bcd0-48df37b921da";
+  // ⚙️ Дані відправника
+  const SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626"; // Львів
+  const SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d"; // Відділення №31
+  const SENDER_REF = "6bcb6d88-16de-11ef-bcd0-48df37b921da"; // ФОП Буздиган
   const CONTACT_SENDER_REF = "f8caa074-1740-11ef-bcd0-48df37b921da";
   const SENDERS_PHONE = "380932532432";
 
@@ -56,13 +58,14 @@ app.post("/api/np-handler", async (req, res) => {
       RecipientName: order.shipping_address?.name || "Тестовий Отримувач",
       RecipientType: "PrivatePerson",
       RecipientsPhone: order.shipping_address?.phone || "380501112233",
-      RecipientAddressName: "Відділення №1",
+      RecipientAddressName: order.shipping_address?.address1 || "Відділення №1",
     },
   };
 
   try {
     const { data } = await axios.post("https://api.novaposhta.ua/v2.0/json/", npRequest);
     if (data.success) {
+      console.log("📨 ТТН створено:", data.data[0]?.IntDocNumber);
       res.json({
         message: "✅ ТТН створено успішно",
         ttn: data.data[0]?.IntDocNumber,
@@ -70,23 +73,24 @@ app.post("/api/np-handler", async (req, res) => {
         data: data.data[0],
       });
     } else {
+      console.error("⚠️ Помилка при створенні ТТН:", data.errors);
       res.status(400).json({ message: "⚠️ Помилка при створенні ТТН", errors: data.errors });
     }
   } catch (err) {
-    console.error("🚨 Помилка при зверненні до API:", err.message);
+    console.error("🚨 API Error:", err.message);
     res.status(500).json({ error: "Failed to contact Nova Poshta API" });
   }
 });
 
-// ✅ Генерація PDF етикетки 100x100 мм
+// ✅ Генерація етикетки 100x100 PDF
 app.post("/api/np-label", async (req, res) => {
-  const { ttn, recipientName, recipientCity } = req.body;
-  if (!ttn) return res.status(400).json({ error: "TTN (tracking number) is required" });
+  const { ttn, order } = req.body;
+  if (!ttn || !order) return res.status(400).json({ error: "TTN і order обов’язкові" });
 
   try {
     console.log("🧾 Генерація етикетки для ТТН:", ttn);
 
-    // 🧩 Створюємо штрихкод
+    // 🧩 Штрихкод
     const barcodeBuffer = await new Promise((resolve, reject) => {
       bwipjs.toBuffer(
         { bcid: "code128", text: String(ttn), scale: 4, height: 15, includetext: false },
@@ -94,38 +98,63 @@ app.post("/api/np-label", async (req, res) => {
       );
     });
 
-    // 🧩 Локальний шрифт DejaVuSans.ttf (підтримує кирилицю)
+    // 🧱 Шрифт
     const fontPath = path.resolve("./fonts/DejaVuSans.ttf");
-    if (!fs.existsSync(fontPath)) {
-      console.error("❌ Шрифт не знайдено:", fontPath);
-      return res.status(500).json({ error: "Font file not found" });
-    }
-
     const fontBytes = fs.readFileSync(fontPath);
 
     // 🧾 Створюємо PDF
     const pdfDoc = await PDFDocument.create();
-    pdfDoc.registerFontkit(fontkit); // ✅ реєструємо fontkit перед вбудуванням
-
+    pdfDoc.registerFontkit(fontkit);
     const font = await pdfDoc.embedFont(fontBytes);
-    const page = pdfDoc.addPage([283.46, 283.46]); // 100x100 мм
+
+    const page = pdfDoc.addPage([283.46, 283.46]);
     const pngImage = await pdfDoc.embedPng(barcodeBuffer);
 
-    // 🖨️ Текст і зображення
-    page.drawImage(pngImage, { x: 40, y: 150, width: 200, height: 50 });
-    page.drawText(`ТТН: ${ttn}`, { x: 60, y: 220, size: 12, font });
-    page.drawText(`Отримувач: ${recipientName || "—"}`, { x: 60, y: 200, size: 10, font });
-    page.drawText(`Місто: ${recipientCity || "—"}`, { x: 60, y: 185, size: 10, font });
-    page.drawText(`Дата: ${new Date().toLocaleString("uk-UA")}`, { x: 60, y: 170, size: 8, font });
+    // 📦 Дані
+    const senderName = "ФОП Буздиган Лариса Василівна";
+    const senderAddr = "м. Львів, Відділення №31";
+    const senderPhone = "380932532432";
+
+    const receiverName = order.shipping_address?.name || "Тестовий Отримувач";
+    const receiverCity = order.shipping_address?.city || "Київ";
+    const receiverAddr = order.shipping_address?.address1 || "Відділення №1";
+    const receiverPhone = order.shipping_address?.phone || "380501112233";
+
+    const orderName = order.name || "Shopify order";
+    const orderCost = order.total_price || "0";
+
+    // 🧭 Розташування тексту
+    const drawText = (text, x, y, size = 10) =>
+      page.drawText(text, { x, y, size, font, color: rgb(0, 0, 0) });
+
+    // 🧩 Макет (верх → низ)
+    drawText("СТІКЕР 100x100", 90, 260, 10);
+
+    drawText("ВІДПРАВНИК:", 20, 240, 9);
+    drawText(senderName, 20, 228, 9);
+    drawText(senderAddr, 20, 216, 9);
+    drawText(`тел: ${senderPhone}`, 20, 204, 9);
+
+    drawText("ОТРИМУВАЧ:", 20, 184, 9);
+    drawText(receiverName, 20, 172, 9);
+    drawText(`${receiverCity}, ${receiverAddr}`, 20, 160, 9);
+    drawText(`тел: ${receiverPhone}`, 20, 148, 9);
+
+    drawText(`Замовлення: ${orderName}`, 20, 128, 9);
+    drawText(`Сума: ${orderCost} грн`, 20, 116, 9);
+    drawText(`Дата: ${new Date().toLocaleDateString("uk-UA")}`, 20, 104, 8);
+
+    // 🏷️ TTN + штрихкод
+    drawText(`ТТН: ${ttn}`, 70, 88, 10);
+    page.drawImage(pngImage, { x: 40, y: 20, width: 200, height: 50 });
 
     const pdfBytes = await pdfDoc.save();
 
-    // 📤 Відправляємо PDF
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="label-${ttn}.pdf"`);
-    res.end(Buffer.from(pdfBytes)); // ✅ правильний спосіб відправки PDF
+    res.end(Buffer.from(pdfBytes));
   } catch (error) {
-    console.error("🚨 Помилка при генерації етикетки:", error);
+    console.error("🚨 PDF Error:", error);
     res.status(500).json({ error: "Failed to generate label PDF", details: error.message });
   }
 });
