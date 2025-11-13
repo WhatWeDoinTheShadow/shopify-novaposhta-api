@@ -15,6 +15,7 @@
   "bwip-js": "^3.3.0",
   "dotenv": "^16.4.5",
   "fontkit": "^2.0.2"
+  "node-fetch": "^3.3.2"
 },
   "engines": {
     "node": ">=18.x"
