@@ -14,7 +14,7 @@
     "pdf-lib": "^1.17.1",
     "bwip-js": "^3.3.0",
     "dotenv": "^16.4.5",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
     "fontkit": "^2.0.2"
   },
   "engines": {
