@@ -2,7 +2,7 @@ import express from "express";
 import axios from "axios";
 import bwipjs from "bwip-js";
 import { PDFDocument } from "pdf-lib";
-import * as fontkit from "fontkit"; // ✅ правильний імпорт
+import * as fontkit from "fontkit"; // ✅ правильний імпорт без default
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
@@ -11,11 +11,11 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 🧠 Помилки
+// 🧠 Відлов помилок
 process.on("unhandledRejection", (reason) => console.error("⚠️ Unhandled Rejection:", reason));
 process.on("uncaughtException", (err) => console.error("🔥 Uncaught Exception:", err));
 
-// ✅ Перевірка
+// ✅ Головна сторінка
 app.get("/", (req, res) => {
   res.send("✅ Shopify → Nova Poshta API працює! 🚀");
 });
@@ -78,7 +78,7 @@ app.post("/api/np-handler", async (req, res) => {
   }
 });
 
-// ✅ Генерація PDF етикетки
+// ✅ Генерація PDF етикетки 100x100 мм
 app.post("/api/np-label", async (req, res) => {
   const { ttn, recipientName, recipientCity } = req.body;
   if (!ttn) return res.status(400).json({ error: "TTN (tracking number) is required" });
@@ -86,6 +86,7 @@ app.post("/api/np-label", async (req, res) => {
   try {
     console.log("🧾 Генерація етикетки для ТТН:", ttn);
 
+    // 🧩 Створюємо штрихкод
     const barcodeBuffer = await new Promise((resolve, reject) => {
       bwipjs.toBuffer(
         { bcid: "code128", text: String(ttn), scale: 4, height: 15, includetext: false },
@@ -93,17 +94,24 @@ app.post("/api/np-label", async (req, res) => {
       );
     });
 
-    // 🧩 Підключаємо шрифт DejaVuSans.ttf з локальної папки
+    // 🧩 Локальний шрифт DejaVuSans.ttf (підтримує кирилицю)
     const fontPath = path.resolve("./fonts/DejaVuSans.ttf");
+    if (!fs.existsSync(fontPath)) {
+      console.error("❌ Шрифт не знайдено:", fontPath);
+      return res.status(500).json({ error: "Font file not found" });
+    }
+
     const fontBytes = fs.readFileSync(fontPath);
 
+    // 🧾 Створюємо PDF
     const pdfDoc = await PDFDocument.create();
-    pdfDoc.registerFontkit(fontkit);
+    pdfDoc.registerFontkit(fontkit); // ✅ реєструємо fontkit перед вбудуванням
 
     const font = await pdfDoc.embedFont(fontBytes);
-    const page = pdfDoc.addPage([283.46, 283.46]);
+    const page = pdfDoc.addPage([283.46, 283.46]); // 100x100 мм
     const pngImage = await pdfDoc.embedPng(barcodeBuffer);
 
+    // 🖨️ Текст і зображення
     page.drawImage(pngImage, { x: 40, y: 150, width: 200, height: 50 });
     page.drawText(`ТТН: ${ttn}`, { x: 60, y: 220, size: 12, font });
     page.drawText(`Отримувач: ${recipientName || "—"}`, { x: 60, y: 200, size: 10, font });
@@ -112,9 +120,10 @@ app.post("/api/np-label", async (req, res) => {
 
     const pdfBytes = await pdfDoc.save();
 
+    // 📤 Відправляємо PDF
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="label-${ttn}.pdf"`);
-    res.end(Buffer.from(pdfBytes));
+    res.end(Buffer.from(pdfBytes)); // ✅ правильний спосіб відправки PDF
   } catch (error) {
     console.error("🚨 Помилка при генерації етикетки:", error);
     res.status(500).json({ error: "Failed to generate label PDF", details: error.message });
