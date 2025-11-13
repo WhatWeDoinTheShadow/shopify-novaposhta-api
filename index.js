@@ -39,4 +39,7 @@ app.post("/api/np-handler", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+app.get("/", (req, res) => {
+  res.send("✅ Shopify → Nova Poshta API працює! 🚀");
+});
 app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
