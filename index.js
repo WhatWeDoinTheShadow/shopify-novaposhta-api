@@ -101,19 +101,25 @@ app.post("/api/np-label", async (req, res) => {
 
     // ВІД
     page.drawText(`ВІД: ${timestamp}`, { x: 10, y: height - 38, size: 9, font: boldFont });
-    page.drawText("КОМУ:", { x: width / 2 + 10, y: height - 38, size: 9, font: boldFont });
+    page.drawText("КОМУ:", { x: width / 2 + 15, y: height - 38, size: 9, font: boldFont });
 
-    // Відправник
-    page.drawText("БУЗДИГАН ЛАРИСА ВАСИЛІВНА ФОП", { x: 10, y: height - 50, size: 7.5, font: boldFont });
-    page.drawText("Галун Сергій Сергійович", { x: 10, y: height - 60, size: 8, font });
-    page.drawText("Львів, Відділення №31", { x: 10, y: height - 70, size: 8, font });
-    page.drawText("067 461 40 67", { x: 10, y: height - 80, size: 8, font });
+    // 🔹 Автоматичний перенос для довгих рядків “відправника”
+    const senderLines = wrapText("БУЗДИГАН ЛАРИСА ВАСИЛІВНА ФОП", boldFont, 7.5, 120);
+    senderLines.forEach((line, i) => {
+      page.drawText(line, { x: 10, y: height - 50 - i * 9, size: 7.5, font: boldFont });
+    });
+
+    // решта підписів ліворуч
+    const senderBaseY = height - 50 - senderLines.length * 9;
+    page.drawText("Галун Сергій Сергійович", { x: 10, y: senderBaseY - 10, size: 8, font });
+    page.drawText("Львів, Відділення №31", { x: 10, y: senderBaseY - 20, size: 8, font });
+    page.drawText("067 461 40 67", { x: 10, y: senderBaseY - 30, size: 8, font });
 
     // Отримувач
-    page.drawText("Приватна особа", { x: width / 2 + 10, y: height - 50, size: 8, font: boldFont });
-    page.drawText(recipientName || "Отримувач", { x: width / 2 + 10, y: height - 60, size: 8, font });
-    page.drawText(`${recipientCity || "Київ"}, Відділення №557`, { x: width / 2 + 10, y: height - 70, size: 8, font });
-    page.drawText(recipientPhone || "0939911203", { x: width / 2 + 10, y: height - 80, size: 8, font });
+    page.drawText("Приватна особа", { x: width / 2 + 15, y: height - 50, size: 8, font: boldFont });
+    page.drawText(recipientName || "Отримувач", { x: width / 2 + 15, y: height - 60, size: 8, font });
+    page.drawText(`${recipientCity || "Київ"}, Відділення №557`, { x: width / 2 + 15, y: height - 70, size: 8, font });
+    page.drawText(recipientPhone || "0939911203", { x: width / 2 + 15, y: height - 80, size: 8, font });
 
     // 🧾 Вартість доставки + опис
     page.drawLine({ start: { x: 0, y: height - 85 }, end: { x: width, y: height - 85 }, thickness: 1, color: black });
