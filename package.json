@@ -5,9 +5,14 @@
   "type": "module",
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "node-fetch": "^3.3.2"
   },
   "scripts": {
     "start": "node index.js"
-  }
+  },
+  "engines": {
+    "node": ">=18.x"
+  },
+  "license": "MIT"
 }
