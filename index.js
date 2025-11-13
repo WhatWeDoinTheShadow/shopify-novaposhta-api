@@ -2,14 +2,13 @@ import express from "express";
 import axios from "axios";
 import bwipjs from "bwip-js";
 import { PDFDocument } from "pdf-lib";
-import fontkit from "fontkit"; // 🧩 СТАБІЛЬНЕ імпортування fontkit
 import dotenv from "dotenv";
 
 dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 🧠 Лог помилок
+// 🧠 Глобальні обробники помилок
 process.on("unhandledRejection", (reason) => console.error("⚠️ Unhandled Rejection:", reason));
 process.on("uncaughtException", (err) => console.error("🔥 Uncaught Exception:", err));
 
@@ -79,14 +78,14 @@ app.post("/api/np-handler", async (req, res) => {
   }
 });
 
-// ✅ Генерація PDF етикетки 100x100
+// ✅ Генерація PDF етикетки (100x100 мм)
 app.post("/api/np-label", async (req, res) => {
   const { ttn, recipientName, recipientCity } = req.body;
 
   if (!ttn) return res.status(400).json({ error: "TTN (tracking number) is required" });
 
   try {
-    console.log("🧾 Початок генерації етикетки для ТТН:", ttn);
+    console.log("🧾 Генерація етикетки для ТТН:", ttn);
 
     // 🧩 Генерація штрихкоду
     const barcodeBuffer = await new Promise((resolve, reject) => {
@@ -96,20 +95,21 @@ app.post("/api/np-label", async (req, res) => {
       );
     });
 
+    // 🧩 Динамічний імпорт fontkit для ESM
+    const { default: fontkit } = await import("fontkit");
+
     // 🧾 Створюємо PDF
     const pdfDoc = await PDFDocument.create();
-
-    // 🧩 РЕЄСТРУЄМО fontkit перед embedFont
     pdfDoc.registerFontkit(fontkit);
 
-    // 🧩 Вбудований Roboto Regular (base64)
+    // 🧩 Вбудований шрифт (base64)
     const robotoBase64 = `
-AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAA... 
+AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAA...
 `; // встав сюди повний base64 шрифт
     const fontBytes = Buffer.from(robotoBase64, "base64");
     const font = await pdfDoc.embedFont(fontBytes);
 
-    // 🧱 Сторінка 100×100 мм
+    // 🧱 Формат сторінки
     const page = pdfDoc.addPage([283.46, 283.46]);
     const pngImage = await pdfDoc.embedPng(barcodeBuffer);
 
