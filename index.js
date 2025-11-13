@@ -2,7 +2,7 @@ import express from "express";
 import axios from "axios";
 import bwipjs from "bwip-js";
 import { PDFDocument } from "pdf-lib";
-import fontkit from "fontkit";
+import * as fontkit from "fontkit"; // ✅ правильний імпорт
 import fs from "fs";
 import path from "path";
 import dotenv from "dotenv";
