@@ -1,7 +1,7 @@
 import express from "express";
 import axios from "axios";
 import bwipjs from "bwip-js";
-import { PDFDocument, rgb } from "pdf-lib";
+import { PDFDocument } from "pdf-lib";
 import * as fontkit from "fontkit";
 import fs from "fs";
 import path from "path";
@@ -11,153 +11,133 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 🧠 Глобальні логери
+// 🧠 Логування помилок
 process.on("unhandledRejection", (reason) => console.error("⚠️ Unhandled Rejection:", reason));
 process.on("uncaughtException", (err) => console.error("🔥 Uncaught Exception:", err));
 
-// ✅ Головна сторінка
+// ✅ Перевірка
 app.get("/", (req, res) => {
-  res.send("✅ Shopify → Nova Poshta API працює! 🚀");
+  res.send("✅ Shopify → Nova Poshta Label API працює! 🚀");
 });
 
-// ✅ Створення ТТН
-app.post("/api/np-handler", async (req, res) => {
-  const order = req.body;
-  console.log("📦 Отримано замовлення Shopify:", order.name);
-
-  if (!process.env.NP_API_KEY) {
-    return res.status(500).json({ error: "❌ NP_API_KEY is missing on server" });
-  }
-
-  // ⚙️ Дані відправника
-  const SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626"; // Львів
-  const SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d"; // Відділення №31
-  const SENDER_REF = "6bcb6d88-16de-11ef-bcd0-48df37b921da"; // ФОП Буздиган
-  const CONTACT_SENDER_REF = "f8caa074-1740-11ef-bcd0-48df37b921da";
-  const SENDERS_PHONE = "380932532432";
-
-  const npRequest = {
-    apiKey: process.env.NP_API_KEY,
-    modelName: "InternetDocument",
-    calledMethod: "save",
-    methodProperties: {
-      PayerType: "Sender",
-      PaymentMethod: "Cash",
-      CargoType: "Parcel",
-      Weight: "1",
-      ServiceType: "WarehouseWarehouse",
-      SeatsAmount: "1",
-      Description: `Shopify order ${order.name || "Без назви"}`,
-      Cost: order.total_price || "0",
-      CitySender: SENDER_CITY_REF,
-      SenderAddress: SENDER_ADDRESS_REF,
-      ContactSender: CONTACT_SENDER_REF,
-      SendersPhone: SENDERS_PHONE,
-      Sender: SENDER_REF,
-      RecipientCityName: order.shipping_address?.city || "Київ",
-      RecipientName: order.shipping_address?.name || "Тестовий Отримувач",
-      RecipientType: "PrivatePerson",
-      RecipientsPhone: order.shipping_address?.phone || "380501112233",
-      RecipientAddressName: order.shipping_address?.address1 || "Відділення №1",
-    },
-  };
-
-  try {
-    const { data } = await axios.post("https://api.novaposhta.ua/v2.0/json/", npRequest);
-    if (data.success) {
-      console.log("📨 ТТН створено:", data.data[0]?.IntDocNumber);
-      res.json({
-        message: "✅ ТТН створено успішно",
-        ttn: data.data[0]?.IntDocNumber,
-        ref: data.data[0]?.Ref,
-        data: data.data[0],
-      });
-    } else {
-      console.error("⚠️ Помилка при створенні ТТН:", data.errors);
-      res.status(400).json({ message: "⚠️ Помилка при створенні ТТН", errors: data.errors });
-    }
-  } catch (err) {
-    console.error("🚨 API Error:", err.message);
-    res.status(500).json({ error: "Failed to contact Nova Poshta API" });
-  }
-});
-
-// ✅ Генерація етикетки 100x100 PDF
+// ✅ Генерація PDF етикетки
 app.post("/api/np-label", async (req, res) => {
-  const { ttn, order } = req.body;
-  if (!ttn || !order) return res.status(400).json({ error: "TTN і order обов’язкові" });
+  const {
+    ttn = "20451294145336",
+    recipientName = "Андрій Суходолов",
+    recipientCity = "Київ",
+    recipientWarehouse = "Відділення №557",
+    recipientPhone = "0939911203",
+    orderDescription = "Моносережка ОПОРА - 1шт",
+    orderCost = "94",
+    orderNumber = "725",
+    branchCode = "Д11/В557"
+  } = req.body;
 
   try {
-    console.log("🧾 Генерація етикетки для ТТН:", ttn);
-
-    // 🧩 Штрихкод
-    const barcodeBuffer = await new Promise((resolve, reject) => {
+    // 🧩 Генеруємо штрихкод основний
+    const mainBarcode = await new Promise((resolve, reject) => {
       bwipjs.toBuffer(
         { bcid: "code128", text: String(ttn), scale: 4, height: 15, includetext: false },
         (err, png) => (err ? reject(err) : resolve(png))
       );
     });
 
-    // 🧱 Шрифт
-    const fontPath = path.resolve("./fonts/DejaVuSans.ttf");
-    const fontBytes = fs.readFileSync(fontPath);
+    // 🧩 Бічний штрихкод (повернутий)
+    const sideBarcode = await new Promise((resolve, reject) => {
+      bwipjs.toBuffer(
+        { bcid: "code128", text: String(ttn), scale: 2, height: 60, includetext: false, rotate: "R" },
+        (err, png) => (err ? reject(err) : resolve(png))
+      );
+    });
 
-    // 🧾 Створюємо PDF
+    // 🧱 Шрифти DejaVuSans
+    const fontPath = path.resolve("./fonts/DejaVuSans.ttf");
+    const boldPath = path.resolve("./fonts/DejaVuSans-Bold.ttf");
+    const fontBytes = fs.readFileSync(fontPath);
+    const boldBytes = fs.readFileSync(boldPath);
+
     const pdfDoc = await PDFDocument.create();
     pdfDoc.registerFontkit(fontkit);
     const font = await pdfDoc.embedFont(fontBytes);
+    const bold = await pdfDoc.embedFont(boldBytes);
 
-    const page = pdfDoc.addPage([283.46, 283.46]);
-    const pngImage = await pdfDoc.embedPng(barcodeBuffer);
+    const page = pdfDoc.addPage([283.46, 283.46]); // 100x100 мм
+    const { width } = page.getSize();
 
-    // 📦 Дані
-    const senderName = "ФОП Буздиган Лариса Василівна";
-    const senderAddr = "м. Львів, Відділення №31";
-    const senderPhone = "380932532432";
+    // 🎯 Верхня чорна смуга
+    page.drawRectangle({ x: 0, y: 250, width, height: 33, color: [0, 0, 0] });
+    page.drawText(`${recipientCity.toUpperCase()} ПОСИЛКОВИЙ`, {
+      x: 10,
+      y: 260,
+      size: 14,
+      font: bold,
+      color: [1, 1, 1],
+    });
+    page.drawText(branchCode, {
+      x: width - 85,
+      y: 260,
+      size: 12,
+      font: bold,
+      color: [1, 1, 1],
+    });
 
-    const receiverName = order.shipping_address?.name || "Тестовий Отримувач";
-    const receiverCity = order.shipping_address?.city || "Київ";
-    const receiverAddr = order.shipping_address?.address1 || "Відділення №1";
-    const receiverPhone = order.shipping_address?.phone || "380501112233";
+    // 🕒 Поточна дата та час
+    const now = new Date();
+    const date = now.toLocaleDateString("uk-UA", { day: "2-digit", month: "2-digit" });
+    const time = now.toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
 
-    const orderName = order.name || "Shopify order";
-    const orderCost = order.total_price || "0";
+    // 🔲 Блок "ВІД" та "КОМУ"
+    const blockY = 185;
+    page.drawText(`ВІД: ${date}/${time}`, { x: 10, y: blockY + 45, size: 9, font: bold });
+    page.drawText("КОМУ:", { x: 145, y: blockY + 45, size: 9, font: bold });
 
-    // 🧭 Розташування тексту
-    const drawText = (text, x, y, size = 10) =>
-      page.drawText(text, { x, y, size, font, color: rgb(0, 0, 0) });
+    // Відправник (статичний)
+    page.drawText("БУЗДИГАН ЛАРИСА ВАСИЛІВНА ФОП", { x: 10, y: blockY + 32, size: 8, font: bold });
+    page.drawText("Галун Сергій Сергійович", { x: 10, y: blockY + 22, size: 8, font });
+    page.drawText("Львів, Відділення №31", { x: 10, y: blockY + 12, size: 8, font });
+    page.drawText("067 461 40 67", { x: 10, y: blockY + 2, size: 8, font });
 
-    // 🧩 Макет (верх → низ)
-    drawText("СТІКЕР 100x100", 90, 260, 10);
+    // Отримувач (динамічний)
+    page.drawText("Приватна особа", { x: 145, y: blockY + 32, size: 8, font: bold });
+    page.drawText(recipientName, { x: 145, y: blockY + 22, size: 8, font });
+    page.drawText(`${recipientCity}, ${recipientWarehouse}`, { x: 145, y: blockY + 12, size: 8, font });
+    page.drawText(recipientPhone, { x: 145, y: blockY + 2, size: 8, font });
 
-    drawText("ВІДПРАВНИК:", 20, 240, 9);
-    drawText(senderName, 20, 228, 9);
-    drawText(senderAddr, 20, 216, 9);
-    drawText(`тел: ${senderPhone}`, 20, 204, 9);
+    // 🔹 Лінія вартості
+    const lineText = `Вартість дост.: ${orderCost} грн (одерж., г-ка), н/з: ${orderNumber}, ${orderDescription}`;
+    page.drawText(lineText, { x: 10, y: 168, size: 8, font });
 
-    drawText("ОТРИМУВАЧ:", 20, 184, 9);
-    drawText(receiverName, 20, 172, 9);
-    drawText(`${receiverCity}, ${receiverAddr}`, 20, 160, 9);
-    drawText(`тел: ${receiverPhone}`, 20, 148, 9);
+    // 🔹 Таблиця (обʼєм, ДВ, місця)
+    page.drawText("0.47", { x: 20, y: 140, size: 10, font: bold });
+    page.drawText("ДВ", { x: 70, y: 140, size: 10, font: bold });
+    page.drawText("1", { x: 120, y: 145, size: 10, font: bold });
+    page.drawText("1", { x: 120, y: 130, size: 10, font: bold });
+    page.drawText("(Об'єм)", { x: 20, y: 130, size: 6, font });
 
-    drawText(`Замовлення: ${orderName}`, 20, 128, 9);
-    drawText(`Сума: ${orderCost} грн`, 20, 116, 9);
-    drawText(`Дата: ${new Date().toLocaleDateString("uk-UA")}`, 20, 104, 8);
+    // 🔹 Основний ТТН
+    const formattedTTN = ttn.replace(/(\d{2})(?=\d)/g, "$1 ").trim();
+    page.drawText(formattedTTN, { x: 60, y: 105, size: 14, font: bold });
 
-    // 🏷️ TTN + штрихкод
-    drawText(`ТТН: ${ttn}`, 70, 88, 10);
-    page.drawImage(pngImage, { x: 40, y: 20, width: 200, height: 50 });
+    // 🔹 Основний штрихкод
+    const barcodeImage = await pdfDoc.embedPng(mainBarcode);
+    page.drawImage(barcodeImage, { x: 40, y: 50, width: 200, height: 40 });
 
+    // 🔹 Вертикальний штрихкод (праворуч)
+    const sideImage = await pdfDoc.embedPng(sideBarcode);
+    page.drawImage(sideImage, { x: width - 20, y: 50, width: 15, height: 140 });
+
+    // 🎉 Готово
     const pdfBytes = await pdfDoc.save();
-
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="label-${ttn}.pdf"`);
     res.end(Buffer.from(pdfBytes));
   } catch (error) {
-    console.error("🚨 PDF Error:", error);
+    console.error("🚨 Помилка при генерації етикетки:", error);
     res.status(500).json({ error: "Failed to generate label PDF", details: error.message });
   }
 });
 
+// ✅ Запуск
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
