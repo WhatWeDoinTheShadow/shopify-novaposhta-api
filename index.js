@@ -2,13 +2,16 @@ import express from "express";
 import axios from "axios";
 import bwipjs from "bwip-js";
 import { PDFDocument } from "pdf-lib";
+import fontkit from "fontkit";
+import fs from "fs";
+import path from "path";
 import dotenv from "dotenv";
 
 dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 🧠 Глобальні обробники помилок
+// 🧠 Помилки
 process.on("unhandledRejection", (reason) => console.error("⚠️ Unhandled Rejection:", reason));
 process.on("uncaughtException", (err) => console.error("🔥 Uncaught Exception:", err));
 
@@ -20,7 +23,6 @@ app.get("/", (req, res) => {
 // ✅ Створення ТТН
 app.post("/api/np-handler", async (req, res) => {
   const order = req.body;
-  console.log("📦 Отримано запит:", order);
 
   if (!process.env.NP_API_KEY) {
     return res.status(500).json({ error: "❌ NP_API_KEY is missing on server" });
@@ -60,8 +62,6 @@ app.post("/api/np-handler", async (req, res) => {
 
   try {
     const { data } = await axios.post("https://api.novaposhta.ua/v2.0/json/", npRequest);
-    console.log("📨 Відповідь Нової Пошти:", data);
-
     if (data.success) {
       res.json({
         message: "✅ ТТН створено успішно",
@@ -78,16 +78,14 @@ app.post("/api/np-handler", async (req, res) => {
   }
 });
 
-// ✅ Генерація PDF етикетки (100x100 мм)
+// ✅ Генерація PDF етикетки
 app.post("/api/np-label", async (req, res) => {
   const { ttn, recipientName, recipientCity } = req.body;
-
   if (!ttn) return res.status(400).json({ error: "TTN (tracking number) is required" });
 
   try {
     console.log("🧾 Генерація етикетки для ТТН:", ttn);
 
-    // 🧩 Генерація штрихкоду
     const barcodeBuffer = await new Promise((resolve, reject) => {
       bwipjs.toBuffer(
         { bcid: "code128", text: String(ttn), scale: 4, height: 15, includetext: false },
@@ -95,25 +93,17 @@ app.post("/api/np-label", async (req, res) => {
       );
     });
 
-    // 🧩 Динамічний імпорт fontkit для ESM
-    const { default: fontkit } = await import("fontkit");
+    // 🧩 Підключаємо шрифт DejaVuSans.ttf з локальної папки
+    const fontPath = path.resolve("./fonts/DejaVuSans.ttf");
+    const fontBytes = fs.readFileSync(fontPath);
 
-    // 🧾 Створюємо PDF
     const pdfDoc = await PDFDocument.create();
     pdfDoc.registerFontkit(fontkit);
 
-    // 🧩 Вбудований шрифт (base64)
-    const robotoBase64 = `
-AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAA...
-`; // встав сюди повний base64 шрифт
-    const fontBytes = Buffer.from(robotoBase64, "base64");
     const font = await pdfDoc.embedFont(fontBytes);
-
-    // 🧱 Формат сторінки
     const page = pdfDoc.addPage([283.46, 283.46]);
     const pngImage = await pdfDoc.embedPng(barcodeBuffer);
 
-    // 🖨️ Контент
     page.drawImage(pngImage, { x: 40, y: 150, width: 200, height: 50 });
     page.drawText(`ТТН: ${ttn}`, { x: 60, y: 220, size: 12, font });
     page.drawText(`Отримувач: ${recipientName || "—"}`, { x: 60, y: 200, size: 10, font });
@@ -121,18 +111,15 @@ AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAA...
     page.drawText(`Дата: ${new Date().toLocaleString("uk-UA")}`, { x: 60, y: 170, size: 8, font });
 
     const pdfBytes = await pdfDoc.save();
-    console.log("✅ PDF етикетка згенерована успішно.");
 
-    // 📤 Відправка PDF
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="label-${ttn}.pdf"`);
     res.send(Buffer.from(pdfBytes));
   } catch (error) {
-    console.error("🚨 Помилка при генерації етикетки:", error.message, error.stack);
+    console.error("🚨 Помилка при генерації етикетки:", error);
     res.status(500).json({ error: "Failed to generate label PDF", details: error.message });
   }
 });
 
-// ✅ Запуск
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
