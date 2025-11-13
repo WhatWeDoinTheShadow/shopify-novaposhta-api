@@ -79,12 +79,16 @@ app.post("/api/np-label", async (req, res) => {
       color: rgb(1, 1, 1),
     });
 
-    // 🧩 Логотип Нової Пошти
-    const logoUrl = "https://novaposhta.ua/img/logo.svg";
-    const logoRes = await fetch(logoUrl);
-    const logoBytes = await logoRes.arrayBuffer();
-    const logoImage = await pdfDoc.embedSvg(logoBytes);
-    page.drawImage(logoImage, { x: width - 105, y: 253, width: 16, height: 16 });
+   // 🧩 Логотип Нової Пошти (PNG-версія)
+try {
+  const logoUrl = "https://upload.wikimedia.org/wikipedia/commons/6/6d/Nova_Poshta_logo.png";
+  const logoRes = await fetch(logoUrl);
+  const logoBytes = await logoRes.arrayBuffer();
+  const logoImage = await pdfDoc.embedPng(logoBytes);
+  page.drawImage(logoImage, { x: width - 115, y: 252, width: 25, height: 25 });
+} catch (e) {
+  console.warn("⚠️ Логотип не завантажено:", e.message);
+}
 
     // Код відділення
     page.drawText(senderBranchCode, {
