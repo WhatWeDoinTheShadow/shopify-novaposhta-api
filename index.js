@@ -105,19 +105,50 @@ app.post("/api/np-label", async (req, res) => {
       );
     });
 
+// ✅ Генерація PDF етикетки 100x100 з підтримкою української мови
+app.post("/api/np-label", async (req, res) => {
+  const { ttn, recipientName, recipientCity } = req.body;
+
+  if (!ttn) {
+    return res.status(400).json({ error: "TTN (tracking number) is required" });
+  }
+
+  try {
+    // 🧩 Генеруємо PNG штрихкод
+    const barcodeBuffer = await new Promise((resolve, reject) => {
+      bwipjs.toBuffer(
+        {
+          bcid: "code128",
+          text: String(ttn),
+          scale: 4,
+          height: 15,
+          includetext: false,
+        },
+        (err, png) => {
+          if (err) reject(err);
+          else resolve(png);
+        }
+      );
+    });
+
     // 🧾 Створюємо PDF 100x100 мм
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([283.46, 283.46]); // 100мм × 100мм
 
-    // ✅ Завантажуємо шрифт Roboto з підтримкою кирилиці
+    // ⚙️ Підключаємо fontkit для роботи з кириличними шрифтами
+    const fontkit = await import("fontkit");
+    pdfDoc.registerFontkit(fontkit.default);
+
+    // ✅ Завантажуємо шрифт Roboto (з підтримкою української)
     const fontBytes = await fetch(
       "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
     ).then((res) => res.arrayBuffer());
     const font = await pdfDoc.embedFont(fontBytes);
 
+    // 🧱 Сторінка (100x100 мм = 283.46pt)
+    const page = pdfDoc.addPage([283.46, 283.46]);
     const pngImage = await pdfDoc.embedPng(barcodeBuffer);
 
-    // Малюємо штрихкод і текст
+    // 🖨️ Малюємо штрихкод і текст
     page.drawImage(pngImage, { x: 40, y: 150, width: 200, height: 50 });
     page.drawText(`ТТН: ${ttn}`, { x: 60, y: 220, size: 12, font });
     page.drawText(`Отримувач: ${recipientName || "—"}`, { x: 60, y: 200, size: 10, font });
@@ -125,7 +156,7 @@ app.post("/api/np-label", async (req, res) => {
 
     const pdfBytes = await pdfDoc.save();
 
-    // Віддаємо PDF як файл
+    // 📤 Віддаємо PDF
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="label-${ttn}.pdf"`);
     res.send(Buffer.from(pdfBytes));
