@@ -114,7 +114,7 @@ app.post("/api/np-label", async (req, res) => {
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="label-${ttn}.pdf"`);
-    res.send(Buffer.from(pdfBytes));
+    res.end(Buffer.from(pdfBytes));
   } catch (error) {
     console.error("🚨 Помилка при генерації етикетки:", error);
     res.status(500).json({ error: "Failed to generate label PDF", details: error.message });
