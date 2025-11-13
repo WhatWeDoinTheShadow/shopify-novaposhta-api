@@ -8,11 +8,11 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// 🧠 Глобальний логгер
+// 🧠 Лог помилок
 process.on("unhandledRejection", (reason) => console.error("⚠️ Unhandled Rejection:", reason));
 process.on("uncaughtException", (err) => console.error("🔥 Uncaught Exception:", err));
 
-// ✅ Головна сторінка
+// ✅ Перевірка
 app.get("/", (req, res) => {
   res.send("✅ Shopify → Nova Poshta API працює! 🚀");
 });
@@ -78,7 +78,7 @@ app.post("/api/np-handler", async (req, res) => {
   }
 });
 
-// ✅ Генерація PDF етикетки 100x100 з вбудованим шрифтом
+// ✅ Генерація PDF етикетки 100x100
 app.post("/api/np-label", async (req, res) => {
   const { ttn, recipientName, recipientCity } = req.body;
 
@@ -95,18 +95,21 @@ app.post("/api/np-label", async (req, res) => {
       );
     });
 
+    // 🧾 Створюємо PDF
     const pdfDoc = await PDFDocument.create();
+
+    // 🧩 Імпортуємо fontkit і реєструємо перед шрифтом
     const fontkit = await import("fontkit");
     pdfDoc.registerFontkit(fontkit.default);
 
     // 🧩 Вбудований Roboto Regular (base64)
     const robotoBase64 = `
-AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAAAZ5HU1VCAqABRwACLdQAAAV6T1MvMgAAAYAAAAbYGNtYXAAZAAAABsIAAAKDGdseWYWF0I3AAAbMAAAB1hoZWFk+pCtNgAAG0wAAAA2aGhlYQf7AJ0AABucAAAAJGhtdHgAawAAABvYAAAADGxvY2EAAAAwAAAb7AAAABRtYXhwAAwANQAAHAAAAAAgbmFtZQa5Dr8AABxMAAACMnBvc3QAAwAAAAAgIAAAAAMAAQAAABwAAAACAAEAAQAAAEFvYm90AAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAZoAZABkAAAACAAIAAgACAAIAAgACAAIAAgADAAQABAAEAAQAAAAEAAAAFAAoADgAUABgAIAAmACoALAAuADAAMgA0ADYANwA4ADoAOwA8AD0APgBBAEMARABGAEcASQBMAE0ATgBPAFAAUQBSAFQAVQBWA...
-`; // обрізано для читабельності — у тебе буде повна base64-строка
+AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAA...
+`; // ⚠️ встав сюди повний base64 шрифт, згенерований з Roboto-Regular.ttf
     const fontBytes = Buffer.from(robotoBase64, "base64");
     const font = await pdfDoc.embedFont(fontBytes);
 
-    // 🧱 Сторінка 100×100 мм
+    // 🧱 Формат 100x100 мм
     const page = pdfDoc.addPage([283.46, 283.46]);
     const pngImage = await pdfDoc.embedPng(barcodeBuffer);
 
@@ -120,6 +123,7 @@ AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAAAZ5HU1VCAqABRwACLdQAAAV6
     const pdfBytes = await pdfDoc.save();
     console.log("✅ PDF етикетка згенерована успішно.");
 
+    // 📤 Відправка PDF
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="label-${ttn}.pdf"`);
     res.send(Buffer.from(pdfBytes));
@@ -129,6 +133,6 @@ AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAAAZ5HU1VCAqABRwACLdQAAAV6
   }
 });
 
-// ✅ Запуск сервера
+// ✅ Запуск
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
