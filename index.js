@@ -84,34 +84,44 @@ app.post("/api/np-label", async (req, res) => {
   }
 
   try {
-    // Генеруємо штрихкод TTN
-    const barcode = await bwipjs.toBuffer({
-      bcid: "code128",
-      text: ttn,
-      scale: 3,
-      height: 10,
-      includetext: false
+    // 🧩 Генеруємо PNG штрихкод (надійний спосіб для Render)
+    const barcodeBuffer = await new Promise((resolve, reject) => {
+      bwipjs.toBuffer(
+        {
+          bcid: "code128",
+          text: ttn,
+          scale: 4,
+          height: 15,
+          includetext: true,
+          textxalign: "center",
+        },
+        (err, png) => {
+          if (err) reject(err);
+          else resolve(png);
+        }
+      );
     });
 
-    // Створюємо PDF
+    // 🧾 Створюємо PDF 100x100 мм
     const pdfDoc = await PDFDocument.create();
-    const page = pdfDoc.addPage([283.46, 283.46]); // 100x100 мм = 283.46pt
+    const page = pdfDoc.addPage([283.46, 283.46]); // 100мм × 100мм
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    const pngImage = await pdfDoc.embedPng(barcodeBuffer);
 
-    const image = await pdfDoc.embedPng(barcode);
-    page.drawImage(image, { x: 50, y: 130, width: 180, height: 50 });
-
-    page.drawText(`ТТН: ${ttn}`, { x: 60, y: 200, size: 12, font });
-    page.drawText(`Отримувач: ${recipientName || "—"}`, { x: 60, y: 180, size: 10, font });
-    page.drawText(`Місто: ${recipientCity || "—"}`, { x: 60, y: 160, size: 10, font });
+    // Малюємо штрихкод і текст
+    page.drawImage(pngImage, { x: 40, y: 150, width: 200, height: 50 });
+    page.drawText(`ТТН: ${ttn}`, { x: 60, y: 220, size: 12, font });
+    page.drawText(`Отримувач: ${recipientName || "—"}`, { x: 60, y: 200, size: 10, font });
+    page.drawText(`Місто: ${recipientCity || "—"}`, { x: 60, y: 185, size: 10, font });
 
     const pdfBytes = await pdfDoc.save();
 
+    // Віддаємо PDF як файл
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="label-${ttn}.pdf"`);
     res.send(Buffer.from(pdfBytes));
   } catch (error) {
-    console.error("🚨 Помилка при генерації етикетки:", error.message);
+    console.error("🚨 Помилка при генерації етикетки:", error);
     res.status(500).json({ error: "Failed to generate label PDF" });
   }
 });
