@@ -66,21 +66,21 @@ app.post("/api/np-label", async (req, res) => {
     const { width } = page.getSize();
 
     // 🎯 Верхня чорна смуга
-    page.drawRectangle({ x: 0, y: 250, width, height: 33, color: [0, 0, 0] });
-    page.drawText(`${recipientCity.toUpperCase()} ПОСИЛКОВИЙ`, {
-      x: 10,
-      y: 260,
-      size: 14,
-      font: bold,
-      color: [1, 1, 1],
-    });
-    page.drawText(branchCode, {
-      x: width - 85,
-      y: 260,
-      size: 12,
-      font: bold,
-      color: [1, 1, 1],
-    });
+page.drawRectangle({ x: 0, y: 250, width, height: 33, color: [0, 0, 0] });
+page.drawText(`${recipientCity.toUpperCase()} ПОСИЛКОВИЙ`, {
+  x: 10,
+  y: 260,
+  size: 14,
+  font: bold,
+  color: [1, 1, 1],
+});
+page.drawText(branchCode, {
+  x: width - 85,
+  y: 260,
+  size: 12,
+  font: bold,
+  color: [1, 1, 1],
+});
 
     // 🕒 Поточна дата та час
     const now = new Date();
