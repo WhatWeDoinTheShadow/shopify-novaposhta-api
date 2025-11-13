@@ -2,6 +2,7 @@ import express from "express";
 import axios from "axios";
 import bwipjs from "bwip-js";
 import { PDFDocument } from "pdf-lib";
+import fontkit from "fontkit"; // 🧩 СТАБІЛЬНЕ імпортування fontkit
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -98,18 +99,17 @@ app.post("/api/np-label", async (req, res) => {
     // 🧾 Створюємо PDF
     const pdfDoc = await PDFDocument.create();
 
-    // 🧩 Імпортуємо fontkit і реєструємо перед шрифтом
-    const fontkit = await import("fontkit");
-    pdfDoc.registerFontkit(fontkit.default);
+    // 🧩 РЕЄСТРУЄМО fontkit перед embedFont
+    pdfDoc.registerFontkit(fontkit);
 
     // 🧩 Вбудований Roboto Regular (base64)
     const robotoBase64 = `
-AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAA...
-`; // ⚠️ встав сюди повний base64 шрифт, згенерований з Roboto-Regular.ttf
+AAEAAAASAQAABAAgR0RFRrRCsIIAAjWsAAAHEkdQT1O0m2fHAAItLAAA... 
+`; // встав сюди повний base64 шрифт
     const fontBytes = Buffer.from(robotoBase64, "base64");
     const font = await pdfDoc.embedFont(fontBytes);
 
-    // 🧱 Формат 100x100 мм
+    // 🧱 Сторінка 100×100 мм
     const page = pdfDoc.addPage([283.46, 283.46]);
     const pngImage = await pdfDoc.embedPng(barcodeBuffer);
 
