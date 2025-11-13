@@ -1,7 +1,8 @@
 import express from "express";
 import axios from "axios";
 import bwipjs from "bwip-js";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDocument } from "pdf-lib";
+import fetch from "node-fetch";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -51,8 +52,8 @@ app.post("/api/np-handler", async (req, res) => {
       RecipientName: order.shipping_address?.name || "Тестовий Отримувач",
       RecipientType: "PrivatePerson",
       RecipientsPhone: order.shipping_address?.phone || "380501112233",
-      RecipientAddressName: "Відділення №1"
-    }
+      RecipientAddressName: "Відділення №1",
+    },
   };
 
   try {
@@ -64,10 +65,13 @@ app.post("/api/np-handler", async (req, res) => {
         message: "✅ ТТН створено успішно",
         ttn: data.data[0]?.IntDocNumber,
         ref: data.data[0]?.Ref,
-        data: data.data[0]
+        data: data.data[0],
       });
     } else {
-      res.status(400).json({ message: "⚠️ Помилка при створенні ТТН", errors: data.errors });
+      res.status(400).json({
+        message: "⚠️ Помилка при створенні ТТН",
+        errors: data.errors,
+      });
     }
   } catch (err) {
     console.error("🚨 Помилка при зверненні до API:", err.message);
@@ -75,7 +79,7 @@ app.post("/api/np-handler", async (req, res) => {
   }
 });
 
-// ✅ Генерація PDF етикетки 100x100
+// ✅ Генерація PDF етикетки 100x100 з підтримкою української мови
 app.post("/api/np-label", async (req, res) => {
   const { ttn, recipientName, recipientCity } = req.body;
 
@@ -84,16 +88,15 @@ app.post("/api/np-label", async (req, res) => {
   }
 
   try {
-    // 🧩 Генеруємо PNG штрихкод (надійний спосіб для Render)
+    // 🧩 Генеруємо PNG штрихкод
     const barcodeBuffer = await new Promise((resolve, reject) => {
       bwipjs.toBuffer(
         {
           bcid: "code128",
-          text: ttn,
+          text: String(ttn),
           scale: 4,
           height: 15,
-          includetext: true,
-          textxalign: "center",
+          includetext: false,
         },
         (err, png) => {
           if (err) reject(err);
@@ -105,7 +108,13 @@ app.post("/api/np-label", async (req, res) => {
     // 🧾 Створюємо PDF 100x100 мм
     const pdfDoc = await PDFDocument.create();
     const page = pdfDoc.addPage([283.46, 283.46]); // 100мм × 100мм
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+    // ✅ Завантажуємо шрифт Roboto з підтримкою кирилиці
+    const fontBytes = await fetch(
+      "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Regular.ttf"
+    ).then((res) => res.arrayBuffer());
+    const font = await pdfDoc.embedFont(fontBytes);
+
     const pngImage = await pdfDoc.embedPng(barcodeBuffer);
 
     // Малюємо штрихкод і текст
@@ -121,7 +130,7 @@ app.post("/api/np-label", async (req, res) => {
     res.setHeader("Content-Disposition", `inline; filename="label-${ttn}.pdf"`);
     res.send(Buffer.from(pdfBytes));
   } catch (error) {
-    console.error("🚨 Помилка при генерації етикетки:", error);
+    console.error("🚨 Помилка при генерації етикетки:", error.message);
     res.status(500).json({ error: "Failed to generate label PDF" });
   }
 });
