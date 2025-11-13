@@ -1,7 +1,7 @@
 {
   "name": "shopify-novaposhta-api",
   "version": "1.0.0",
-  "description": "Shopify → Nova Poshta API integration for automatic TTN creation and label generation",
+  "description": "Shopify → Nova Poshta API integration for auto-generating TTN and labels",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "axios": "^1.6.0",
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "node-fetch": "^3.3.2"
   },
