@@ -134,8 +134,8 @@ export async function handleNovaPoshta(req, res) {
         PayerType: "Sender",
         PaymentMethod: "Cash",
         CargoType: "Parcel",
-        Weight: "1",
-        VolumeGeneral: "0.47",
+        Weight: "0.3", // вага конверта ≈ 300 г
+        VolumeGeneral: "0.001", // ✅ конверт 17×23×2 см
         ServiceType: "WarehouseWarehouse",
         SeatsAmount: "1",
         Cost: order.total_price || "0",
@@ -220,12 +220,8 @@ export async function handleNovaPoshta(req, res) {
 async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount) {
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
-  const font = await pdfDoc.embedFont(
-    fs.readFileSync(`${FONTS_DIR}/DejaVuSans.ttf`)
-  );
-  const boldFont = await pdfDoc.embedFont(
-    fs.readFileSync(`${FONTS_DIR}/DejaVuSans-Bold.ttf`)
-  );
+  const font = await pdfDoc.embedFont(fs.readFileSync(`${FONTS_DIR}/DejaVuSans.ttf`));
+  const boldFont = await pdfDoc.embedFont(fs.readFileSync(`${FONTS_DIR}/DejaVuSans-Bold.ttf`));
   const page = pdfDoc.addPage([283.46, 283.46]);
   const { width, height } = page.getSize();
   const black = rgb(0, 0, 0);
@@ -252,7 +248,7 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
   }
 
   // Таблиця характеристик
-  const volume = npData.VolumeGeneral || "0.47";
+  const volume = npData.VolumeGeneral || "0.001";
   page.drawLine({ start: { x: 0, y: height - 112 }, end: { x: width, y: height - 112 }, thickness: 1, color: black });
   page.drawText(volume, { x: 35, y: height - 125, size: 9, font: boldFont });
   page.drawText("Обʼєм", { x: 25, y: height - 135, size: 6.5, font });
