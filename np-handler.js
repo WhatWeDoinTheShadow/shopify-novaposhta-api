@@ -59,51 +59,78 @@ export async function handleNovaPoshta(req, res) {
     console.log("✅ Місто Ref:", cityRef);
     console.log("✅ Відділення Ref:", warehouseRef);
 
-   // === 3. Створюємо отримувача (Counterparty.save)
-const [lastName, firstName, middleName = ""] = recipientName.split(" ");
+    // === 5. Створюємо або оновлюємо отримувача (Counterparty.save)
+    const [lastName, firstName, middleName = ""] = recipientName.split(" ");
 
-const recipientResponse = await axios.post(
-  "https://api.novaposhta.ua/v2.0/json/",
-  {
-    apiKey: process.env.NP_API_KEY,
-    modelName: "Counterparty",
-    calledMethod: "save",
-    methodProperties: {
-      CounterpartyProperty: "Recipient",
-      CounterpartyType: "PrivatePerson", // ✅ ДОДАНО
-      FirstName: firstName || recipientName,
-      MiddleName: middleName,
-      LastName: lastName || recipientName,
-      Phone: recipientPhone,
-      Email: "",
-      CityRef: cityRef,
-    },
-  }
-);
+    const recipientResponse = await axios.post(
+      "https://api.novaposhta.ua/v2.0/json/",
+      {
+        apiKey: process.env.NP_API_KEY,
+        modelName: "Counterparty",
+        calledMethod: "save",
+        methodProperties: {
+          CounterpartyProperty: "Recipient",
+          CounterpartyType: "PrivatePerson",
+          FirstName: firstName || recipientName,
+          MiddleName: middleName,
+          LastName: lastName || recipientName,
+          Phone: recipientPhone,
+          Email: "",
+          CityRef: cityRef,
+        },
+      }
+    );
 
-if (!recipientResponse.data.success) {
-  throw new Error(
-    `Не вдалося створити отримувача: ${recipientResponse.data.errors.join(", ")}`
-  );
-}
+    if (!recipientResponse.data.success) {
+      throw new Error(
+        `Не вдалося створити отримувача: ${recipientResponse.data.errors.join(", ")}`
+      );
+    }
 
-const RECIPIENT_REF = recipientResponse.data.data[0].Ref;
+    const RECIPIENT_REF = recipientResponse.data.data[0].Ref;
 
-    // === 6. Отримуємо контактну особу отримувача
-    const contactResponse = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+    // === 6. Отримуємо або створюємо контактну особу
+    let contactResponse = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "ContactPerson",
       calledMethod: "getContactPersons",
       methodProperties: { CounterpartyRef: RECIPIENT_REF },
     });
 
-    const CONTACT_RECIPIENT_REF = contactResponse.data.data?.[0]?.Ref;
-    if (!CONTACT_RECIPIENT_REF)
-      throw new Error("Не знайдено контактну особу отримувача");
+    let CONTACT_RECIPIENT_REF = contactResponse.data.data?.[0]?.Ref;
 
-    console.log("👤 Контакт отримувача:", CONTACT_RECIPIENT_REF);
+    if (!CONTACT_RECIPIENT_REF) {
+      console.log("ℹ️ Контактна особа не знайдена — створюємо нову...");
 
-    // === 7. Формуємо ТТН
+      const newContactResponse = await axios.post(
+        "https://api.novaposhta.ua/v2.0/json/",
+        {
+          apiKey: process.env.NP_API_KEY,
+          modelName: "ContactPerson",
+          calledMethod: "save",
+          methodProperties: {
+            CounterpartyRef: RECIPIENT_REF,
+            FirstName: firstName || recipientName,
+            MiddleName: middleName,
+            LastName: lastName || recipientName,
+            Phone: recipientPhone,
+          },
+        }
+      );
+
+      if (!newContactResponse.data.success) {
+        throw new Error(
+          `Не вдалося створити контактну особу: ${newContactResponse.data.errors.join(", ")}`
+        );
+      }
+
+      CONTACT_RECIPIENT_REF = newContactResponse.data.data[0].Ref;
+    }
+
+    console.log("✅ Отримувач створений:", RECIPIENT_REF);
+    console.log("✅ Контактна особа:", CONTACT_RECIPIENT_REF);
+
+    // === 7. Створюємо ТТН
     const npRequest = {
       apiKey: process.env.NP_API_KEY,
       modelName: "InternetDocument",
@@ -134,7 +161,6 @@ const RECIPIENT_REF = recipientResponse.data.data[0].Ref;
       },
     };
 
-    // === 8. Створюємо ТТН
     const { data } = await axios.post(
       "https://api.novaposhta.ua/v2.0/json/",
       npRequest
