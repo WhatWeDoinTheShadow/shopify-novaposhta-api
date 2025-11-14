@@ -59,31 +59,35 @@ export async function handleNovaPoshta(req, res) {
     console.log("✅ Місто Ref:", cityRef);
     console.log("✅ Відділення Ref:", warehouseRef);
 
-    // === 5. Створюємо отримувача
-    const [lastName, firstName, middleName = ""] = recipientName.split(" ");
+   // === 3. Створюємо отримувача (Counterparty.save)
+const [lastName, firstName, middleName = ""] = recipientName.split(" ");
 
-    const recipientResponse = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
-      apiKey: process.env.NP_API_KEY,
-      modelName: "Counterparty",
-      calledMethod: "save",
-      methodProperties: {
-        CounterpartyProperty: "Recipient",
-        FirstName: firstName || recipientName,
-        MiddleName: middleName,
-        LastName: lastName || recipientName,
-        Phone: recipientPhone,
-        Email: "",
-        CityRef: cityRef,
-      },
-    });
+const recipientResponse = await axios.post(
+  "https://api.novaposhta.ua/v2.0/json/",
+  {
+    apiKey: process.env.NP_API_KEY,
+    modelName: "Counterparty",
+    calledMethod: "save",
+    methodProperties: {
+      CounterpartyProperty: "Recipient",
+      CounterpartyType: "PrivatePerson", // ✅ ДОДАНО
+      FirstName: firstName || recipientName,
+      MiddleName: middleName,
+      LastName: lastName || recipientName,
+      Phone: recipientPhone,
+      Email: "",
+      CityRef: cityRef,
+    },
+  }
+);
 
-    if (!recipientResponse.data.success)
-      throw new Error(
-        `Не вдалося створити отримувача: ${recipientResponse.data.errors.join(", ")}`
-      );
+if (!recipientResponse.data.success) {
+  throw new Error(
+    `Не вдалося створити отримувача: ${recipientResponse.data.errors.join(", ")}`
+  );
+}
 
-    const RECIPIENT_REF = recipientResponse.data.data?.[0]?.Ref;
-    console.log("✅ Отримувач створений:", RECIPIENT_REF);
+const RECIPIENT_REF = recipientResponse.data.data[0].Ref;
 
     // === 6. Отримуємо контактну особу отримувача
     const contactResponse = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
