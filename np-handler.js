@@ -54,9 +54,6 @@ export async function handleNovaPoshta(req, res) {
     const warehouseRef = whResponse.data.data?.[0]?.Ref;
     if (!warehouseRef) throw new Error(`Не знайдено відділення: ${warehouseName}`);
 
-    console.log("✅ Місто Ref:", cityRef);
-    console.log("✅ Відділення Ref:", warehouseRef);
-
     // === 5. Створюємо або оновлюємо отримувача
     const [lastName, firstName, middleName = ""] = recipientName.split(" ");
 
@@ -76,11 +73,10 @@ export async function handleNovaPoshta(req, res) {
       },
     });
 
-    if (!recipientResponse.data.success) {
+    if (!recipientResponse.data.success)
       throw new Error(
         `Не вдалося створити отримувача: ${recipientResponse.data.errors.join(", ")}`
       );
-    }
 
     const RECIPIENT_REF = recipientResponse.data.data[0].Ref;
 
@@ -110,17 +106,13 @@ export async function handleNovaPoshta(req, res) {
         },
       });
 
-      if (!newContactResponse.data.success) {
+      if (!newContactResponse.data.success)
         throw new Error(
           `Не вдалося створити контактну особу: ${newContactResponse.data.errors.join(", ")}`
         );
-      }
 
       CONTACT_RECIPIENT_REF = newContactResponse.data.data[0].Ref;
     }
-
-    console.log("✅ Отримувач створений:", RECIPIENT_REF);
-    console.log("✅ Контактна особа:", CONTACT_RECIPIENT_REF);
 
     // === 7. Створюємо ТТН
     const npRequest = {
@@ -173,7 +165,7 @@ export async function handleNovaPoshta(req, res) {
   }
 }
 
-// ========================== PDF генерація ==========================
+// ========================== PDF генерація (100x100 мм) ==========================
 async function generateLabel(npData, order) {
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
@@ -185,30 +177,41 @@ async function generateLabel(npData, order) {
   const { width, height } = page.getSize();
   const black = rgb(0, 0, 0);
 
-  // Верхня чорна смуга
-  page.drawRectangle({ x: 0, y: height - 25, width, height: 25, color: black });
+  // === Верхня чорна смуга
+  page.drawRectangle({ x: 0, y: height - 28, width, height: 28, color: black });
   page.drawText(npData.CityRecipientDescription || "КИЇВ СХІД", {
-    x: 10,
-    y: height - 18,
+    x: 15,
+    y: height - 20,
     size: 11,
     color: rgb(1, 1, 1),
     font: boldFont,
   });
 
-  // Іконка коробки
+  // === Іконка коробки
   try {
-    const iconBytes = await fetch("https://upload.wikimedia.org/wikipedia/commons/8/8e/Parcel_icon.png").then(r => r.arrayBuffer());
+    const iconBytes = await fetch(
+      "https://upload.wikimedia.org/wikipedia/commons/8/8e/Parcel_icon.png"
+    ).then((r) => r.arrayBuffer());
     const icon = await pdfDoc.embedPng(iconBytes);
-    page.drawImage(icon, { x: width - 40, y: height - 22, width: 15, height: 15 });
+    page.drawImage(icon, { x: width - 35, y: height - 22, width: 15, height: 15 });
   } catch {}
 
-  // Таблиця ВІД / КОМУ
-  const topY = height - 25;
-  const bottomY = height - 85;
-  page.drawRectangle({ x: 0, y: bottomY, width, height: 60, borderColor: black, borderWidth: 1 });
+  // === Таблиця “ВІД / КОМУ”
+  const tableTop = height - 28;
+  const tableHeight = 62;
+  const halfWidth = width / 2;
+
+  page.drawRectangle({
+    x: 0,
+    y: tableTop - tableHeight,
+    width,
+    height: tableHeight,
+    borderColor: black,
+    borderWidth: 1,
+  });
   page.drawLine({
-    start: { x: width / 2, y: bottomY },
-    end: { x: width / 2, y: topY },
+    start: { x: halfWidth, y: tableTop },
+    end: { x: halfWidth, y: tableTop - tableHeight },
     thickness: 1,
     color: black,
   });
@@ -220,44 +223,62 @@ async function generateLabel(npData, order) {
     minute: "2-digit",
   });
 
-  // ВІД
-  page.drawText(`ВІД: ${timestamp}`, { x: 10, y: height - 38, size: 9, font: boldFont });
-  page.drawText("БУЗДИГАН ЛАРИСА ВАСИЛІВНА ФОП", { x: 10, y: height - 50, size: 8, font: boldFont });
-  page.drawText("Галун Сергій Сергійович", { x: 10, y: height - 60, size: 8, font });
-  page.drawText("Львів, Відділення №31", { x: 10, y: height - 70, size: 8, font });
-  page.drawText("067 461 40 67", { x: 10, y: height - 80, size: 8, font });
+  // === ВІД
+  let y = height - 42;
+  page.drawText(`ВІД: ${timestamp}`, { x: 10, y, size: 8, font: boldFont });
+  y -= 10;
+  page.drawText("БУЗДИГАН ЛАРИСА ВАСИЛІВНА ФОП", { x: 10, y, size: 7.5, font: boldFont });
+  y -= 9;
+  page.drawText("Галун Сергій Сергійович", { x: 10, y, size: 7.5, font });
+  y -= 9;
+  page.drawText("Львів, Відділення №31", { x: 10, y, size: 7.5, font });
+  y -= 9;
+  page.drawText("067 461 40 67", { x: 10, y, size: 7.5, font });
 
-  // КОМУ
-  page.drawText("КОМУ:", { x: width / 2 + 10, y: height - 38, size: 9, font: boldFont });
-  page.drawText(npData.RecipientContactPerson || "Отримувач", { x: width / 2 + 10, y: height - 50, size: 8, font });
-  page.drawText(npData.CityRecipientDescription || "Київ", { x: width / 2 + 10, y: height - 60, size: 8, font });
-  page.drawText(npData.RecipientsPhone || "0939911203", { x: width / 2 + 10, y: height - 70, size: 8, font });
-  page.drawText(npData.RecipientAddressDescription || "Відділення", { x: width / 2 + 10, y: height - 80, size: 8, font });
+  // === КОМУ
+  let ry = height - 42;
+  page.drawText("КОМУ:", { x: halfWidth + 10, y: ry, size: 8, font: boldFont });
+  ry -= 10;
+  page.drawText(npData.RecipientContactPerson || "Отримувач", { x: halfWidth + 10, y: ry, size: 7.5, font });
+  ry -= 9;
+  page.drawText(npData.CityRecipientDescription || "Київ", { x: halfWidth + 10, y: ry, size: 7.5, font });
+  ry -= 9;
+  page.drawText(npData.RecipientsPhone || "0939911203", { x: halfWidth + 10, y: ry, size: 7.5, font });
+  ry -= 9;
+  page.drawText("Відділення", { x: halfWidth + 10, y: ry, size: 7.5, font });
 
-  // Вартість + опис
-  const desc = order.line_items?.map(i => i.name).join(", ") || "Shopify Order";
-  page.drawText(`Вартість дост.: ${npData.Cost || "0"} грн (одерж.), ${desc}`, {
-    x: 10,
-    y: height - 100,
-    size: 8,
-    font,
-  });
+  // === Вартість + опис
+  const desc = `Вартість дост.: ${npData.Cost || "0"} грн (одерж., г-ка), ${
+    order.line_items?.map((i) => i.name).join(", ") || order.name
+  }`;
+  page.drawText(desc, { x: 10, y: height - 102, size: 7.5, font });
 
-  // TTN
+  // === Табличка характеристик
+  page.drawLine({ start: { x: 0, y: height - 112 }, end: { x: width, y: height - 112 }, thickness: 1, color: black });
+  page.drawText("0.47", { x: 30, y: height - 125, size: 9, font: boldFont });
+  page.drawText("(Об'єм)", { x: 22, y: height - 135, size: 6.5, font });
+  page.drawText("ДВ", { x: 120, y: height - 125, size: 9, font: boldFont });
+  page.drawText("1", { x: 122, y: height - 135, size: 9, font: boldFont });
+  page.drawText("1", { x: 210, y: height - 125, size: 9, font: boldFont });
+  page.drawText("Місце", { x: 195, y: height - 135, size: 6.5, font });
+
+  // === Роздільна лінія перед штрихкодом
+  page.drawLine({ start: { x: 0, y: height - 145 }, end: { x: width, y: height - 145 }, thickness: 1, color: black });
+
+  // === TTN і штрихкод
   const formattedTTN = npData.IntDocNumber.replace(/(\d{2})(?=\d)/g, "$1 ").trim();
-  page.drawText(formattedTTN, { x: 55, y: height - 175, size: 14, font: boldFont });
+  page.drawText(formattedTTN, { x: 60, y: height - 180, size: 14, font: boldFont });
 
-  // Штрихкод
   const barcodeBuffer = await new Promise((resolve, reject) =>
     bwipjs.toBuffer(
-      { bcid: "code128", text: npData.IntDocNumber, scale: 3, height: 20, includetext: false },
+      { bcid: "code128", text: npData.IntDocNumber, scale: 3, height: 25, includetext: false },
       (err, png) => (err ? reject(err) : resolve(png))
     )
   );
   const barcodeImage = await pdfDoc.embedPng(barcodeBuffer);
-  page.drawImage(barcodeImage, { x: 30, y: height - 220, width: 230, height: 40 });
+  page.drawImage(barcodeImage, { x: 25, y: height - 230, width: 230, height: 45 });
 
-  // Зберігаємо PDF
+  // === Зберігаємо PDF
   const pdfBytes = await pdfDoc.save();
   const pdfPath = `${LABELS_DIR}/label-${npData.IntDocNumber}.pdf`;
   fs.writeFileSync(pdfPath, pdfBytes);
