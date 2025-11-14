@@ -26,23 +26,46 @@ process.on("uncaughtException", (err) =>
 );
 
 // ========================== ROUTES ==========================
+
+// 🔹 Кореневий маршрут
 app.get("/", (req, res) =>
   res.send("✅ Shopify → Nova Poshta автоматична етикетка працює 🚀")
 );
 
-// 🔹 Головний маршрут для Shopify
+// 🔹 Fallback для тестів у браузері (GET)
+app.get("/api/np-handler", (req, res) => {
+  res.status(200).send(`
+    <h2>🚚 Shopify → Нова Пошта API</h2>
+    <p>Цей маршрут очікує <strong>POST</strong> запит із JSON-даними Shopify.</p>
+    <pre>{
+  "name": "#1002",
+  "total_price": "450",
+  "shipping_address": {
+    "city": "Київ",
+    "address1": "Відділення №1",
+    "name": "Буздиган Лариса Василівна",
+    "phone": "+380673334455"
+  },
+  "line_items": [{ "name": "Моносережка ОПОРА", "quantity": 1 }]
+}</pre>
+  `);
+});
+
+// 🔹 Основний POST маршрут (Shopify webhook)
 app.post("/api/np-handler", async (req, res) => {
   try {
-    // Викликаємо логіку з np-handler.js
     const result = await handleNovaPoshta(req, res);
 
-    // Якщо функція повернула результат (а не відправила res сама)
+    // Якщо функція повернула результат — формуємо URL
     if (result && result.ttn && !res.headersSent) {
       const baseUrl = `${req.protocol}://${req.get("host")}`;
       const labelUrl = `${baseUrl}/labels/label-${result.ttn}.pdf`;
 
       res.json({
-        ...result,
+        message: "✅ ТТН створено і етикетка згенерована",
+        ttn: result.ttn,
+        ref: result.ref,
+        label_path: result.label_path,
         label_url: labelUrl,
       });
     }
