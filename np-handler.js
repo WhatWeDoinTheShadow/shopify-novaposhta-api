@@ -57,8 +57,20 @@ export async function handleNovaPoshta(req, res) {
     const warehouseRef = whResponse.data.data?.[0]?.Ref;
     if (!warehouseRef) throw new Error(`Не знайдено відділення: ${warehouseName}`);
 
-    // === 3. Отримувач
-    const [lastName, firstName, middleName = ""] = recipientName.split(" ");
+    // === 3. Отримувач (очищення імені)
+    let cleanName = recipientName.replace(/[^А-Яа-яІіЇїЄєҐґ'\s]/g, "").trim();
+    if (!cleanName) cleanName = "Тестовий Отримувач";
+
+    let [first, last] = cleanName.split(" ");
+    if (!last) {
+      last = first || "Отримувач";
+      first = "Тест";
+    }
+
+    const firstName = first;
+    const lastName = last;
+    const middleName = "";
+
     const recipientResponse = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "Counterparty",
@@ -66,9 +78,9 @@ export async function handleNovaPoshta(req, res) {
       methodProperties: {
         CounterpartyProperty: "Recipient",
         CounterpartyType: "PrivatePerson",
-        FirstName: firstName || recipientName,
+        FirstName: firstName,
         MiddleName: middleName,
-        LastName: lastName || recipientName,
+        LastName: lastName,
         Phone: recipientPhone,
         CityRef: cityRef,
       },
@@ -103,9 +115,9 @@ export async function handleNovaPoshta(req, res) {
           calledMethod: "save",
           methodProperties: {
             CounterpartyRef: RECIPIENT_REF,
-            FirstName: firstName || recipientName,
+            FirstName: firstName,
             MiddleName: middleName,
-            LastName: lastName || recipientName,
+            LastName: lastName,
             Phone: recipientPhone,
           },
         }
@@ -146,11 +158,11 @@ export async function handleNovaPoshta(req, res) {
         SenderAddress: SENDER_ADDRESS_REF,
         ContactSender: CONTACT_SENDER_REF,
         Sender: SENDER_REF,
-        SendersPhone: SENDERS_PHONE, // 🟢 виправлено
+        SendersPhone: SENDERS_PHONE,
         CityRecipient: cityRef,
         RecipientAddress: warehouseRef,
         Recipient: RECIPIENT_REF,
-        ContactRecipient: CONTACT_RECIPIENT_REF, // 🟢 тепер точно існує
+        ContactRecipient: CONTACT_RECIPIENT_REF,
         RecipientsPhone: recipientPhone,
         AfterpaymentOnGoodsCost: afterPaymentAmount,
       },
@@ -161,7 +173,6 @@ export async function handleNovaPoshta(req, res) {
       npRequest
     );
 
-    // ✅ перевірка відповіді
     if (!data.success) {
       console.error("❌ Нова Пошта повернула помилку:", data.errors || data.warnings);
       throw new Error(`Не вдалося створити ТТН: ${data.errors?.join(", ") || "невідома помилка"}`);
@@ -236,7 +247,6 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
     font: boldFont,
   });
 
-  // КІТ / Д13 / 12
   if (cargoCode) {
     page.drawText(cargoCode, {
       x: width - 80,
@@ -247,7 +257,6 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
     });
   }
 
-  // Таблиця характеристик
   const volume = npData.VolumeGeneral || "0.001";
   page.drawLine({ start: { x: 0, y: height - 112 }, end: { x: width, y: height - 112 }, thickness: 1, color: black });
   page.drawText(volume, { x: 35, y: height - 125, size: 9, font: boldFont });
@@ -258,7 +267,6 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
   page.drawText("Місце", { x: 195, y: height - 135, size: 6.5, font });
   page.drawLine({ start: { x: 0, y: height - 145 }, end: { x: width, y: height - 145 }, thickness: 1, color: black });
 
-  // Вартість доставки + COD
   const cost = npData.Cost || "0";
   const description = order.line_items?.map((i) => i.name).join(", ") || order.name;
   const shortTTN = npData.IntDocNumber.slice(-3);
@@ -268,7 +276,6 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
   }
   page.drawText(paymentLine, { x: 10, y: height - 102, size: 7.5, font });
 
-  // TTN і штрихкод
   const formattedTTN = npData.IntDocNumber.replace(/(\d{2})(?=\d)/g, "$1 ").trim();
   page.drawText(formattedTTN, { x: 60, y: height - 175, size: 14, font: boldFont });
   const barcodeBuffer = await new Promise((resolve, reject) =>
