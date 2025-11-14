@@ -4,7 +4,6 @@ import { PDFDocument, rgb } from "pdf-lib";
 import * as fontkit from "fontkit";
 import fs from "fs";
 import path from "path";
-import fetch from "node-fetch";
 
 const FONTS_DIR = path.resolve("./fonts");
 const LABELS_DIR = path.resolve("./labels");
@@ -32,10 +31,6 @@ export async function handleNovaPoshta(req, res) {
     const recipientPhone =
       order.shipping_address?.phone?.replace(/\D/g, "") || "380501112233";
     const paymentMethod = order.payment_gateway_names?.[0] || "";
-
-    console.log("🏙️ Місто:", cityName);
-    console.log("🏤 Відділення:", warehouseName);
-    console.log("💰 Оплата:", paymentMethod);
 
     // === 1. CityRef
     const cityResponse = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
@@ -106,7 +101,6 @@ export async function handleNovaPoshta(req, res) {
 
     if (!CONTACT_RECIPIENT_REF) {
       console.log("ℹ️ Контактна особа не знайдена — створюємо нову...");
-
       const newContactResponse = await axios.post(
         "https://api.novaposhta.ua/v2.0/json/",
         {
@@ -122,15 +116,12 @@ export async function handleNovaPoshta(req, res) {
           },
         }
       );
-
       if (!newContactResponse.data.success) {
         throw new Error(
           `Не вдалося створити контактну особу: ${newContactResponse.data.errors.join(", ")}`
         );
       }
-
       CONTACT_RECIPIENT_REF = newContactResponse.data.data[0].Ref;
-      console.log("✅ Контактна особа створена:", CONTACT_RECIPIENT_REF);
     }
 
     // === 5. Визначаємо чи післяплата
@@ -146,8 +137,8 @@ export async function handleNovaPoshta(req, res) {
         PayerType: "Sender",
         PaymentMethod: "Cash",
         CargoType: "Parcel",
-        Weight: "0.3", // вага конверта ≈ 300 г
-        VolumeGeneral: "0.001", // ✅ конверт 17×23×2 см
+        Weight: "0.3",
+        VolumeGeneral: "0.001",
         ServiceType: "WarehouseWarehouse",
         SeatsAmount: "1",
         Cost: order.total_price || "0",
@@ -179,14 +170,9 @@ export async function handleNovaPoshta(req, res) {
     }
 
     const ttnData = data.data?.[0];
-    if (!ttnData) {
-      console.error("⚠️ Відповідь Нової Пошти без data[0]:", data);
-      throw new Error("Неправильна відповідь від Нової Пошти (немає даних ТТН)");
-    }
-
     console.log("✅ ТТН створено:", ttnData.IntDocNumber);
 
-    // === 7. Отримуємо код маршруту
+    // === 7. Код маршруту
     let cargoCode = "";
     try {
       const routeInfo = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
@@ -196,39 +182,32 @@ export async function handleNovaPoshta(req, res) {
         methodProperties: { IntDocNumber: ttnData.IntDocNumber },
       });
       cargoCode = routeInfo.data.data?.[0]?.CargoTrackingRef || "";
-      if (cargoCode) console.log("🚛 Логістичний маршрут:", cargoCode);
-    } catch (e) {
-      console.log("⚠️ Не вдалося отримати CargoTrackingRef:", e.message);
-    }
+    } catch {}
 
-    // === 8. Генеруємо PDF
+    // === 8. PDF
     const pdfPath = await generateLabel(
       ttnData,
       order,
       cargoCode,
       isCOD,
-      afterPaymentAmount
+      afterPaymentAmount,
+      recipientPhone
     );
-    console.log("🖨️ Етикетка збережена:", pdfPath);
 
-    // === 9. Публічний URL
     const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const labelUrl = `${baseUrl}/labels/label-${ttnData.IntDocNumber}.pdf`;
-
     res.json({
       message: "✅ ТТН створено і етикетка згенерована",
       ttn: ttnData.IntDocNumber,
       cargo_code: cargoCode || null,
-      label_url: labelUrl,
+      label_url: `${baseUrl}/labels/label-${ttnData.IntDocNumber}.pdf`,
     });
   } catch (err) {
-    console.error("🚨 Помилка:", err.message);
     res.status(500).json({ error: err.message });
   }
 }
 
-// ========================== PDF генерація ==========================
-async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount) {
+// ==================== PDF ====================
+async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount, recipientPhone) {
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
   const font = await pdfDoc.embedFont(fs.readFileSync(`${FONTS_DIR}/DejaVuSans.ttf`));
@@ -237,53 +216,62 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
   const { width, height } = page.getSize();
   const black = rgb(0, 0, 0);
 
-  // Верхній чорний блок
+  // 🔲 Верхній чорний блок
   page.drawRectangle({ x: 0, y: height - 35, width, height: 35, color: black });
   page.drawText(npData.CityRecipientDescription || "КИЇВ СХІД", {
-    x: 15,
-    y: height - 23,
-    size: 12,
-    color: rgb(1, 1, 1),
-    font: boldFont,
+    x: 15, y: height - 23, size: 12, color: rgb(1, 1, 1), font: boldFont,
   });
-
   if (cargoCode) {
     page.drawText(cargoCode, {
-      x: width - 80,
-      y: height - 23,
-      size: 9,
-      color: rgb(1, 1, 1),
-      font: boldFont,
+      x: width - 75, y: height - 23, size: 9, color: rgb(1, 1, 1), font: boldFont,
     });
   }
 
-  const volume = npData.VolumeGeneral || "0.001";
-  page.drawLine({ start: { x: 0, y: height - 112 }, end: { x: width, y: height - 112 }, thickness: 1, color: black });
-  page.drawText(volume, { x: 35, y: height - 125, size: 9, font: boldFont });
-  page.drawText("Обʼєм", { x: 25, y: height - 135, size: 6.5, font });
-  page.drawText("ДВ", { x: 120, y: height - 125, size: 9, font: boldFont });
-  page.drawText("1", { x: 125, y: height - 135, size: 9, font: boldFont });
-  page.drawText("1", { x: 210, y: height - 125, size: 9, font: boldFont });
-  page.drawText("Місце", { x: 195, y: height - 135, size: 6.5, font });
-  page.drawLine({ start: { x: 0, y: height - 145 }, end: { x: width, y: height - 145 }, thickness: 1, color: black });
+  // 📋 ВІД
+  page.drawText("ВІД:", { x: 10, y: height - 50, size: 8, font: boldFont });
+  page.drawText("БУЗДИГАН ЛАРИСА ВАСИЛІВНА ФОП", { x: 35, y: height - 50, size: 7, font });
+  page.drawText("Львів, Відділення №31", { x: 35, y: height - 60, size: 7, font });
+  page.drawText("093 253 24 32", { x: 35, y: height - 70, size: 7, font });
 
+  // 📦 КОМУ
+  page.drawText("КОМУ:", { x: 10, y: height - 85, size: 8, font: boldFont });
+  page.drawText(order.shipping_address?.name || "Отримувач", { x: 35, y: height - 85, size: 7, font });
+  page.drawText(`${order.shipping_address?.city || ""}, ${order.shipping_address?.address1 || ""}`, {
+    x: 35, y: height - 95, size: 7, font,
+  });
+  page.drawText(recipientPhone, { x: 35, y: height - 105, size: 7, font });
+
+  // 💰 Вартість / опис
   const cost = npData.Cost || "0";
-  const description = order.line_items?.map((i) => i.name).join(", ") || order.name;
+  const description = order.line_items?.map(i => i.name).join(", ") || order.name;
   const shortTTN = npData.IntDocNumber.slice(-3);
-  let paymentLine = `Вартість дост.: ${cost} грн (одерж., безг-ка), ${description}`;
+  let line = `Вартість дост.: ${cost} грн (одерж., безг-ка), ${description}`;
   if (isCOD) {
-    paymentLine = `Вартість дост.: ${cost} грн (одерж., безг-ка), Конт. опл: ${afterPaymentAmount} грн, н/з: ${shortTTN}, ${description}`;
+    line = `Вартість дост.: ${cost} грн (одерж., безг-ка), Конт. опл: ${afterPaymentAmount} грн, н/з: ${shortTTN}, ${description}`;
   }
-  page.drawText(paymentLine, { x: 10, y: height - 102, size: 7.5, font });
+  page.drawText(line, { x: 10, y: height - 122, size: 7, font });
 
+  // 📏 Таблиця параметрів
+  const volume = npData.VolumeGeneral || "0.001";
+  page.drawLine({ start: { x: 0, y: height - 132 }, end: { x: width, y: height - 132 }, thickness: 1, color: black });
+  page.drawText(volume, { x: 35, y: height - 145, size: 9, font: boldFont });
+  page.drawText("Обʼєм", { x: 25, y: height - 155, size: 6.5, font });
+  page.drawText("ДВ", { x: 120, y: height - 145, size: 9, font: boldFont });
+  page.drawText("1", { x: 125, y: height - 155, size: 9, font: boldFont });
+  page.drawText("1", { x: 210, y: height - 145, size: 9, font: boldFont });
+  page.drawText("Місце", { x: 195, y: height - 155, size: 6.5, font });
+  page.drawLine({ start: { x: 0, y: height - 162 }, end: { x: width, y: height - 162 }, thickness: 1, color: black });
+
+  // 🧾 ТТН і штрихкод
   const formattedTTN = npData.IntDocNumber.replace(/(\d{2})(?=\d)/g, "$1 ").trim();
-  page.drawText(formattedTTN, { x: 60, y: height - 175, size: 14, font: boldFont });
+  page.drawText(formattedTTN, { x: 60, y: height - 190, size: 14, font: boldFont });
+
   const barcodeBuffer = await new Promise((resolve, reject) =>
     bwipjs.toBuffer({ bcid: "code128", text: npData.IntDocNumber, scale: 3, height: 25, includetext: false },
       (err, png) => (err ? reject(err) : resolve(png)))
   );
   const barcodeImage = await pdfDoc.embedPng(barcodeBuffer);
-  page.drawImage(barcodeImage, { x: 25, y: height - 230, width: 230, height: 45 });
+  page.drawImage(barcodeImage, { x: 25, y: height - 240, width: 230, height: 45 });
 
   const pdfBytes = await pdfDoc.save();
   const pdfPath = `${LABELS_DIR}/label-${npData.IntDocNumber}.pdf`;
