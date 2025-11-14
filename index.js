@@ -1,25 +1,23 @@
 import express from "express";
-import axios from "axios";
-import bwipjs from "bwip-js";
-import { PDFDocument, rgb } from "pdf-lib";
-import * as fontkit from "fontkit";
+import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
-import dotenv from "dotenv";
-import fetch from "node-fetch";
 import { handleNovaPoshta } from "./np-handler.js";
 
 dotenv.config();
 
-// ініціалізуємо сервер ДО використання
+// ========================== INIT SERVER ==========================
 const app = express();
 app.use(express.json());
-app.use("/labels", express.static("labels"));
+
 // ========================== CONFIG ==========================
-const FONTS_DIR = path.resolve("./fonts");
 const LABELS_DIR = path.resolve("./labels");
 if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
+// 🔹 Роздаємо PDF через /labels
+app.use("/labels", express.static("labels"));
+
+// 🧠 Error handling
 process.on("unhandledRejection", (reason) =>
   console.error("⚠️ Unhandled Rejection:", reason)
 );
@@ -32,9 +30,32 @@ app.get("/", (req, res) =>
   res.send("✅ Shopify → Nova Poshta автоматична етикетка працює 🚀")
 );
 
-// головний маршрут для Shopify (використовує окремий модуль np-handler)
-app.post("/api/np-handler", handleNovaPoshta);
+// 🔹 Головний маршрут для Shopify
+app.post("/api/np-handler", async (req, res) => {
+  try {
+    // Викликаємо логіку з np-handler.js
+    const result = await handleNovaPoshta(req, res);
 
-// ==============================================================
+    // Якщо функція повернула результат (а не відправила res сама)
+    if (result && result.ttn && !res.headersSent) {
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const labelUrl = `${baseUrl}/labels/label-${result.ttn}.pdf`;
+
+      res.json({
+        ...result,
+        label_url: labelUrl,
+      });
+    }
+  } catch (err) {
+    console.error("🚨 Помилка у головному маршруті:", err.message);
+    if (!res.headersSent)
+      res.status(500).json({ error: err.message });
+  }
+});
+
+// ========================== SERVER ==========================
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🌐 Labels available at http://localhost:${PORT}/labels/<filename>.pdf`);
+});
