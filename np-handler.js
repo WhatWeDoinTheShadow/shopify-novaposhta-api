@@ -122,7 +122,19 @@ export async function handleNovaPoshta(req, res) {
       "https://api.novaposhta.ua/v2.0/json/",
       npRequest
     );
-    const ttnData = data.data[0];
+
+    // ✅ нова перевірка
+    if (!data.success) {
+      console.error("❌ Нова Пошта повернула помилку:", data.errors || data.warnings);
+      throw new Error(`Не вдалося створити ТТН: ${data.errors?.join(", ") || "невідома помилка"}`);
+    }
+
+    const ttnData = data.data?.[0];
+    if (!ttnData) {
+      console.error("⚠️ Відповідь Нової Пошти без data[0]:", data);
+      throw new Error("Неправильна відповідь від Нової Пошти (немає даних ТТН)");
+    }
+
     console.log("✅ ТТН створено:", ttnData.IntDocNumber);
 
     // === 7. Отримуємо код маршруту
@@ -158,7 +170,7 @@ export async function handleNovaPoshta(req, res) {
       message: "✅ ТТН створено і етикетка згенерована",
       ttn: ttnData.IntDocNumber,
       cargo_code: cargoCode || null,
-      label_url: labelUrl, // 👈 ось тут тепер повний публічний лінк
+      label_url: labelUrl,
     });
   } catch (err) {
     console.error("🚨 Помилка:", err.message);
