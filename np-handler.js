@@ -37,19 +37,42 @@ export async function handleNovaPoshta(req, res) {
       calledMethod: "getCities",
       methodProperties: { FindByString: cityName },
     });
+
     const cityRef = cityResponse.data.data?.[0]?.Ref;
     if (!cityRef) throw new Error(`Не знайдено місто: ${cityName}`);
 
-    // === 4. Отримуємо WarehouseRef
+    // === 4. Розумний пошук відділення або поштомату
+    let warehouseRef = null;
+    const isLocker = /поштомат|locker|parcel/i.test(warehouseName);
+    const cleanWarehouseName = (warehouseName || "")
+      .toLowerCase()
+      .replace(/нова пошта|np|новапошта|відділення|поштомат|postomat|locker|№|#/gi, "")
+      .trim();
+
+    console.log("🔍 Пошук відділення або поштомату:", cleanWarehouseName || "(порожнє)");
+
     const whResponse = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "AddressGeneral",
-      calledMethod: "getWarehouses",
-      methodProperties: { CityRef: cityRef, FindByString: warehouseName },
+      calledMethod: isLocker ? "getParcelLockers" : "getWarehouses",
+      methodProperties: { CityRef: cityRef },
     });
-    const warehouseRef = whResponse.data.data?.[0]?.Ref;
-    if (!warehouseRef)
-      throw new Error(`Не знайдено відділення: ${warehouseName}`);
+
+    const allWh = whResponse.data.data || [];
+
+    const foundWh =
+      allWh.find((wh) => wh.Description.toLowerCase().includes(cleanWarehouseName)) ||
+      allWh.find((wh) => wh.ShortAddress.toLowerCase().includes(cleanWarehouseName)) ||
+      allWh.find((wh) => wh.Number === cleanWarehouseName);
+
+    if (foundWh) {
+      warehouseRef = foundWh.Ref;
+      console.log("✅ Знайдено відділення:", foundWh.Description);
+    } else {
+      console.log("⚠️ Не вдалося знайти відділення по тексту:", cleanWarehouseName);
+      warehouseRef = allWh[0]?.Ref;
+      console.log("🪄 Використано стандартне відділення:", allWh[0]?.Description);
+    }
 
     console.log("✅ Місто Ref:", cityRef);
     console.log("✅ Відділення Ref:", warehouseRef);
@@ -135,7 +158,7 @@ export async function handleNovaPoshta(req, res) {
         PaymentMethod: "Cash",
         CargoType: "Parcel",
         Weight: "1",
-        ServiceType: "WarehouseWarehouse",
+        ServiceType: isLocker ? "WarehouseWarehouse" : "WarehouseWarehouse",
         SeatsAmount: "1",
         Description:
           order.line_items?.map((i) => i.name).join(", ") ||
