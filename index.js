@@ -14,7 +14,7 @@ dotenv.config();
 // ініціалізуємо сервер ДО використання
 const app = express();
 app.use(express.json());
-
+app.use("/labels", express.static("labels"));
 // ========================== CONFIG ==========================
 const FONTS_DIR = path.resolve("./fonts");
 const LABELS_DIR = path.resolve("./labels");
