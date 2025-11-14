@@ -8,6 +8,9 @@ import path from "path";
 import dotenv from "dotenv";
 import fetch from "node-fetch";
 
+import { handleNovaPoshta } from "./np-handler.js";
+app.post("/api/np-handler", handleNovaPoshta);
+
 dotenv.config();
 const app = express();
 app.use(express.json());
