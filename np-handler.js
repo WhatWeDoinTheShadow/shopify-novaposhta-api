@@ -73,16 +73,53 @@ export async function handleNovaPoshta(req, res) {
         CityRef: cityRef,
       },
     });
+
+    if (!recipientResponse.data.success) {
+      throw new Error(
+        `Не вдалося створити отримувача: ${recipientResponse.data.errors.join(", ")}`
+      );
+    }
+
     const RECIPIENT_REF = recipientResponse.data.data[0].Ref;
 
-    // === 4. Контактна особа
-    const contactResponse = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+    // === 4. Контактна особа (створюємо, якщо немає)
+    let contactResponse = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "ContactPerson",
       calledMethod: "getContactPersons",
       methodProperties: { CounterpartyRef: RECIPIENT_REF },
     });
-    const CONTACT_RECIPIENT_REF = contactResponse.data.data?.[0]?.Ref;
+
+    let CONTACT_RECIPIENT_REF = contactResponse.data.data?.[0]?.Ref;
+
+    if (!CONTACT_RECIPIENT_REF) {
+      console.log("ℹ️ Контактна особа не знайдена — створюємо нову...");
+
+      const newContactResponse = await axios.post(
+        "https://api.novaposhta.ua/v2.0/json/",
+        {
+          apiKey: process.env.NP_API_KEY,
+          modelName: "ContactPerson",
+          calledMethod: "save",
+          methodProperties: {
+            CounterpartyRef: RECIPIENT_REF,
+            FirstName: firstName || recipientName,
+            MiddleName: middleName,
+            LastName: lastName || recipientName,
+            Phone: recipientPhone,
+          },
+        }
+      );
+
+      if (!newContactResponse.data.success) {
+        throw new Error(
+          `Не вдалося створити контактну особу: ${newContactResponse.data.errors.join(", ")}`
+        );
+      }
+
+      CONTACT_RECIPIENT_REF = newContactResponse.data.data[0].Ref;
+      console.log("✅ Контактна особа створена:", CONTACT_RECIPIENT_REF);
+    }
 
     // === 5. Визначаємо чи післяплата
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
@@ -109,10 +146,11 @@ export async function handleNovaPoshta(req, res) {
         SenderAddress: SENDER_ADDRESS_REF,
         ContactSender: CONTACT_SENDER_REF,
         Sender: SENDER_REF,
+        SendersPhone: SENDERS_PHONE, // 🟢 виправлено
         CityRecipient: cityRef,
         RecipientAddress: warehouseRef,
         Recipient: RECIPIENT_REF,
-        ContactRecipient: CONTACT_RECIPIENT_REF,
+        ContactRecipient: CONTACT_RECIPIENT_REF, // 🟢 тепер точно існує
         RecipientsPhone: recipientPhone,
         AfterpaymentOnGoodsCost: afterPaymentAmount,
       },
@@ -123,7 +161,7 @@ export async function handleNovaPoshta(req, res) {
       npRequest
     );
 
-    // ✅ нова перевірка
+    // ✅ перевірка відповіді
     if (!data.success) {
       console.error("❌ Нова Пошта повернула помилку:", data.errors || data.warnings);
       throw new Error(`Не вдалося створити ТТН: ${data.errors?.join(", ") || "невідома помилка"}`);
@@ -162,7 +200,7 @@ export async function handleNovaPoshta(req, res) {
     );
     console.log("🖨️ Етикетка збережена:", pdfPath);
 
-    // === 9. Формуємо публічний URL
+    // === 9. Публічний URL
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const labelUrl = `${baseUrl}/labels/label-${ttnData.IntDocNumber}.pdf`;
 
@@ -192,7 +230,7 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
   const { width, height } = page.getSize();
   const black = rgb(0, 0, 0);
 
-  // === Верхній чорний блок
+  // Верхній чорний блок
   page.drawRectangle({ x: 0, y: height - 35, width, height: 35, color: black });
   page.drawText(npData.CityRecipientDescription || "КИЇВ СХІД", {
     x: 15,
@@ -202,7 +240,7 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
     font: boldFont,
   });
 
-  // === КІТ / Д13 / 12
+  // КІТ / Д13 / 12
   if (cargoCode) {
     page.drawText(cargoCode, {
       x: width - 80,
@@ -213,54 +251,33 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
     });
   }
 
-  // === Таблиця характеристик
+  // Таблиця характеристик
   const volume = npData.VolumeGeneral || "0.47";
-  page.drawLine({
-    start: { x: 0, y: height - 112 },
-    end: { x: width, y: height - 112 },
-    thickness: 1,
-    color: black,
-  });
+  page.drawLine({ start: { x: 0, y: height - 112 }, end: { x: width, y: height - 112 }, thickness: 1, color: black });
   page.drawText(volume, { x: 35, y: height - 125, size: 9, font: boldFont });
   page.drawText("Обʼєм", { x: 25, y: height - 135, size: 6.5, font });
   page.drawText("ДВ", { x: 120, y: height - 125, size: 9, font: boldFont });
   page.drawText("1", { x: 125, y: height - 135, size: 9, font: boldFont });
   page.drawText("1", { x: 210, y: height - 125, size: 9, font: boldFont });
   page.drawText("Місце", { x: 195, y: height - 135, size: 6.5, font });
-  page.drawLine({
-    start: { x: 0, y: height - 145 },
-    end: { x: width, y: height - 145 },
-    thickness: 1,
-    color: black,
-  });
+  page.drawLine({ start: { x: 0, y: height - 145 }, end: { x: width, y: height - 145 }, thickness: 1, color: black });
 
-  // === Вартість доставки + COD
+  // Вартість доставки + COD
   const cost = npData.Cost || "0";
-  const description =
-    order.line_items?.map((i) => i.name).join(", ") || order.name;
+  const description = order.line_items?.map((i) => i.name).join(", ") || order.name;
   const shortTTN = npData.IntDocNumber.slice(-3);
-
   let paymentLine = `Вартість дост.: ${cost} грн (одерж., безг-ка), ${description}`;
   if (isCOD) {
     paymentLine = `Вартість дост.: ${cost} грн (одерж., безг-ка), Конт. опл: ${afterPaymentAmount} грн, н/з: ${shortTTN}, ${description}`;
   }
-
   page.drawText(paymentLine, { x: 10, y: height - 102, size: 7.5, font });
 
-  // === TTN і штрихкод
+  // TTN і штрихкод
   const formattedTTN = npData.IntDocNumber.replace(/(\d{2})(?=\d)/g, "$1 ").trim();
   page.drawText(formattedTTN, { x: 60, y: height - 175, size: 14, font: boldFont });
   const barcodeBuffer = await new Promise((resolve, reject) =>
-    bwipjs.toBuffer(
-      {
-        bcid: "code128",
-        text: npData.IntDocNumber,
-        scale: 3,
-        height: 25,
-        includetext: false,
-      },
-      (err, png) => (err ? reject(err) : resolve(png))
-    )
+    bwipjs.toBuffer({ bcid: "code128", text: npData.IntDocNumber, scale: 3, height: 25, includetext: false },
+      (err, png) => (err ? reject(err) : resolve(png)))
   );
   const barcodeImage = await pdfDoc.embedPng(barcodeBuffer);
   page.drawImage(barcodeImage, { x: 25, y: height - 230, width: 230, height: 45 });
