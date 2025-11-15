@@ -5,9 +5,16 @@ import path from "path";
 const LABELS_DIR = path.resolve("./labels");
 if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
+let printedOrders = new Set(); // 🧠 антидубль
+
 export async function handleNovaPoshta(req, res) {
   const order = req.body;
   console.log("📦 Нове замовлення з Shopify:", order.name);
+
+  if (printedOrders.has(order.name)) {
+    console.log("⚠️ Це замовлення вже надруковано:", order.name);
+    return res.json({ message: "🟡 Вже надруковано", order: order.name });
+  }
 
   if (!process.env.NP_API_KEY)
     return res.status(500).json({ error: "❌ NP_API_KEY is missing on server" });
@@ -88,38 +95,13 @@ export async function handleNovaPoshta(req, res) {
     const RECIPIENT_REF = recipientRes.data.data[0].Ref;
 
     // === 4. Контактна особа ===
-    let contactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+    const contactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "ContactPerson",
       calledMethod: "getContactPersons",
       methodProperties: { CounterpartyRef: RECIPIENT_REF },
     });
-
     let CONTACT_RECIPIENT_REF = contactRes.data.data?.[0]?.Ref;
-
-    if (!CONTACT_RECIPIENT_REF) {
-      const newContact = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
-        apiKey: process.env.NP_API_KEY,
-        modelName: "ContactPerson",
-        calledMethod: "save",
-        methodProperties: {
-          CounterpartyRef: RECIPIENT_REF,
-          FirstName: first,
-          LastName: last,
-          Phone: recipientPhone,
-        },
-      });
-
-      if (!newContact.data.success)
-        throw new Error(
-          `Не вдалося створити контактну особу: ${newContact.data.errors.join(", ")}`
-        );
-
-      CONTACT_RECIPIENT_REF = newContact.data.data[0].Ref;
-      console.log("✅ Контактна особа створена:", CONTACT_RECIPIENT_REF);
-    } else {
-      console.log("✅ Контактна особа знайдена:", CONTACT_RECIPIENT_REF);
-    }
 
     // === 5. Післяплата ===
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
@@ -169,17 +151,17 @@ export async function handleNovaPoshta(req, res) {
 
     // === 7. Отримуємо офіційний PDF від НП ===
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnData.IntDocNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
-    console.log("📎 Офіційна етикетка НП:", labelUrl);
+    console.log("📎 Етикетка:", labelUrl);
 
     const pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer" });
     const pdfPath = path.join(LABELS_DIR, `label-${ttnData.IntDocNumber}.pdf`);
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
-    // === 8. Автодрук через PrintNode (коректний масштаб для Xprinter) ===
+    // === 8. Автодрук через PrintNode (фікс масштабу і без полів) ===
     if (process.env.PRINTNODE_API_KEY && process.env.PRINTNODE_PRINTER_ID) {
       try {
-        console.log("🖨️ Відправляю PDF через PrintNode (з фіксованим масштабом)...");
+        console.log("🖨️ Відправляю PDF через PrintNode...");
 
         const pdfBuffer = fs.readFileSync(pdfPath);
         const pdfBase64 = pdfBuffer.toString("base64");
@@ -194,12 +176,12 @@ export async function handleNovaPoshta(req, res) {
             source: "Shopify AutoPrint",
             options: {
               copies: 1,
-              fit_to_page: false,
-              scale: 0.72,
+              fit_to_page: true,
+              scale: 1.0,
               paper: "Custom.100x100mm",
-              dpi: "203", // ✅ має бути рядком
-              bin: "Default",
-              color: false, // ✅ булеве значення
+              dpi: "203",
+              margins: "none",
+              color: false,
             },
           },
           {
@@ -212,22 +194,19 @@ export async function handleNovaPoshta(req, res) {
 
         console.log("✅ Етикетка відправлена на друк через PrintNode");
       } catch (printErr) {
-        console.error(
-          "🚨 Помилка друку через PrintNode:",
-          printErr.response?.data || printErr.message
-        );
+        console.error("🚨 Помилка друку через PrintNode:", printErr.response?.data || printErr.message);
       }
-    } else {
-      console.warn("⚠️ PRINTNODE_API_KEY або PRINTER_ID не вказано — друк пропущено");
     }
 
-    const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnData.IntDocNumber}.pdf`;
+    printedOrders.add(order.name); // 🧠 запам’ятати, щоб не друкувати двічі
 
+    const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnData.IntDocNumber}.pdf`;
     return res.json({
-      message: "✅ ТТН створено, етикетка збережена і надіслана на друк",
+      message: "✅ ТТН створено, етикетка надрукована без полів",
       ttn: ttnData.IntDocNumber,
       label_url: publicUrl,
     });
+
   } catch (err) {
     console.error("🚨 Помилка:", err.message);
     res.status(500).json({ error: err.message });
