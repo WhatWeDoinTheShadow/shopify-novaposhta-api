@@ -95,13 +95,41 @@ export async function handleNovaPoshta(req, res) {
     const RECIPIENT_REF = recipientRes.data.data[0].Ref;
 
     // === 4. Контактна особа ===
-    const contactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+    let contactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "ContactPerson",
       calledMethod: "getContactPersons",
       methodProperties: { CounterpartyRef: RECIPIENT_REF },
     });
+
     let CONTACT_RECIPIENT_REF = contactRes.data.data?.[0]?.Ref;
+
+    // Якщо контактна особа не знайдена — створюємо нову
+    if (!CONTACT_RECIPIENT_REF) {
+      console.log("ℹ️ Контактна особа не знайдена — створюємо нову...");
+      const newContactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+        apiKey: process.env.NP_API_KEY,
+        modelName: "ContactPerson",
+        calledMethod: "save",
+        methodProperties: {
+          CounterpartyRef: RECIPIENT_REF,
+          FirstName: first,
+          LastName: last,
+          Phone: recipientPhone,
+        },
+      });
+
+      if (!newContactRes.data.success) {
+        throw new Error(
+          `Не вдалося створити контактну особу: ${newContactRes.data.errors.join(", ")}`
+        );
+      }
+
+      CONTACT_RECIPIENT_REF = newContactRes.data.data[0].Ref;
+      console.log("✅ Контактна особа створена:", CONTACT_RECIPIENT_REF);
+    } else {
+      console.log("✅ Контактна особа знайдена:", CONTACT_RECIPIENT_REF);
+    }
 
     // === 5. Післяплата ===
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
