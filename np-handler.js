@@ -176,18 +176,31 @@ export async function handleNovaPoshta(req, res) {
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
-    // === 8. Автодрук через PrintNode ===
+    // === 8. Автодрук через PrintNode (коректний масштаб для Xprinter) ===
     if (process.env.PRINTNODE_API_KEY && process.env.PRINTNODE_PRINTER_ID) {
       try {
-        console.log("🖨️ Відправляю PDF через PrintNode...");
+        console.log("🖨️ Відправляю PDF через PrintNode (з фіксованим масштабом)...");
+
+        const pdfBuffer = fs.readFileSync(pdfPath);
+        const pdfBase64 = pdfBuffer.toString("base64");
+
         await axios.post(
           "https://api.printnode.com/printjobs",
           {
             printerId: parseInt(process.env.PRINTNODE_PRINTER_ID),
             title: `Nova Poshta ${ttnData.IntDocNumber}`,
-            contentType: "pdf_uri",
-            content: labelUrl,
+            contentType: "pdf_base64",
+            content: pdfBase64,
             source: "Shopify AutoPrint",
+            options: {
+              copies: 1,
+              fit_to_page: false,
+              scale: 0.72, // оптимально для Xprinter 100x100
+              paper: "Custom.100x100mm",
+              dpi: 203,
+              bin: "Default",
+              color: "monochrome",
+            },
           },
           {
             auth: {
@@ -196,9 +209,13 @@ export async function handleNovaPoshta(req, res) {
             },
           }
         );
+
         console.log("✅ Етикетка відправлена на друк через PrintNode");
       } catch (printErr) {
-        console.error("🚨 Помилка друку через PrintNode:", printErr.message);
+        console.error(
+          "🚨 Помилка друку через PrintNode:",
+          printErr.response?.data || printErr.message
+        );
       }
     } else {
       console.warn("⚠️ PRINTNODE_API_KEY або PRINTER_ID не вказано — друк пропущено");
