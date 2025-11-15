@@ -1,7 +1,6 @@
 import axios from "axios";
 import fs from "fs";
 import path from "path";
-import child_process from "child_process";
 
 const LABELS_DIR = path.resolve("./labels");
 if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
@@ -40,7 +39,6 @@ export async function handleNovaPoshta(req, res) {
       calledMethod: "getCities",
       methodProperties: { FindByString: cityName },
     });
-
     const cityRef = cityRes.data.data?.[0]?.Ref;
     if (!cityRef) throw new Error(`Не знайдено місто: ${cityName}`);
 
@@ -51,7 +49,6 @@ export async function handleNovaPoshta(req, res) {
       calledMethod: "getWarehouses",
       methodProperties: { CityRef: cityRef, FindByString: warehouseName },
     });
-
     const warehouseRef = whRes.data.data?.[0]?.Ref;
     if (!warehouseRef) throw new Error(`Не знайдено відділення: ${warehouseName}`);
 
@@ -60,16 +57,13 @@ export async function handleNovaPoshta(req, res) {
       ?.replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'\s]/g, "")
       ?.trim();
     if (!cleanName || cleanName.length < 2) cleanName = "Тест Отримувач";
-
     let [first, last] = cleanName.split(" ");
     if (!last) {
       last = first || "Отримувач";
       first = "Тест";
     }
-
     first = first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
     last = last.charAt(0).toUpperCase() + last.slice(1).toLowerCase();
-
     console.log(`👤 Отримувач: ${first} ${last}`);
 
     const recipientRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
@@ -175,7 +169,6 @@ export async function handleNovaPoshta(req, res) {
 
     // === 7. Отримуємо офіційний PDF від НП ===
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnData.IntDocNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
-
     console.log("📎 Офіційна етикетка НП:", labelUrl);
 
     const pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer" });
@@ -183,19 +176,32 @@ export async function handleNovaPoshta(req, res) {
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
-    // === 8. Автодрук через системний принтер ===
-    try {
-      const printerName = "Xprinter_XP_480B";
-      console.log(`🖨️ Відправляю на друк через ${printerName}...`);
-      child_process.exec(`lp -d ${printerName} "${pdfPath}"`, (err, stdout, stderr) => {
-        if (err) {
-          console.error("🚨 Помилка друку:", err.message);
-        } else {
-          console.log("✅ Файл відправлено на друк:", stdout);
-        }
-      });
-    } catch (printErr) {
-      console.error("⚠️ Не вдалося надрукувати:", printErr.message);
+    // === 8. Автодрук через PrintNode ===
+    if (process.env.PRINTNODE_API_KEY && process.env.PRINTNODE_PRINTER_ID) {
+      try {
+        console.log("🖨️ Відправляю PDF через PrintNode...");
+        await axios.post(
+          "https://api.printnode.com/printjobs",
+          {
+            printerId: parseInt(process.env.PRINTNODE_PRINTER_ID),
+            title: `Nova Poshta ${ttnData.IntDocNumber}`,
+            contentType: "pdf_uri",
+            content: labelUrl,
+            source: "Shopify AutoPrint",
+          },
+          {
+            auth: {
+              username: process.env.PRINTNODE_API_KEY,
+              password: "",
+            },
+          }
+        );
+        console.log("✅ Етикетка відправлена на друк через PrintNode");
+      } catch (printErr) {
+        console.error("🚨 Помилка друку через PrintNode:", printErr.message);
+      }
+    } else {
+      console.warn("⚠️ PRINTNODE_API_KEY або PRINTER_ID не вказано — друк пропущено");
     }
 
     const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnData.IntDocNumber}.pdf`;
