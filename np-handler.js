@@ -214,7 +214,7 @@ export async function handleNovaPoshta(req, res) {
               dpi: "203x203",
               margins: "none",
               color: false,
-              duplex: "off",
+              duplex: "one-sided", // ✅ правильне значення
               rotate: "0",
             },
           },
