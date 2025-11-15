@@ -1,9 +1,5 @@
 import axios from "axios";
-import fs from "fs";
 import path from "path";
-
-const LABELS_DIR = path.resolve("./labels");
-if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
 export async function handleNovaPoshta(req, res) {
   const order = req.body;
@@ -34,7 +30,7 @@ export async function handleNovaPoshta(req, res) {
     console.log("🏤 Відділення:", warehouseName);
     console.log("💰 Оплата:", paymentMethod);
 
-    // === 1. Отримуємо CityRef
+    // === 1. CityRef
     const cityRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "Address",
@@ -44,7 +40,7 @@ export async function handleNovaPoshta(req, res) {
     const cityRef = cityRes.data.data?.[0]?.Ref;
     if (!cityRef) throw new Error(`Не знайдено місто: ${cityName}`);
 
-    // === 2. Отримуємо WarehouseRef
+    // === 2. WarehouseRef
     const whRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "AddressGeneral",
@@ -54,7 +50,7 @@ export async function handleNovaPoshta(req, res) {
     const warehouseRef = whRes.data.data?.[0]?.Ref;
     if (!warehouseRef) throw new Error(`Не знайдено відділення: ${warehouseName}`);
 
-    // === 3. Створюємо отримувача
+    // === 3. Отримувач
     let cleanName = recipientName.replace(/[^А-Яа-яІіЇїЄєҐґ'\s]/g, "").trim();
     if (!cleanName) cleanName = "Тестовий Отримувач";
     let [first, last] = cleanName.split(" ");
@@ -76,20 +72,50 @@ export async function handleNovaPoshta(req, res) {
         CityRef: cityRef,
       },
     });
+
     if (!recipientRes.data.success)
-      throw new Error(`Не вдалося створити отримувача: ${recipientRes.data.errors.join(", ")}`);
+      throw new Error(
+        `Не вдалося створити отримувача: ${recipientRes.data.errors.join(", ")}`
+      );
+
     const RECIPIENT_REF = recipientRes.data.data[0].Ref;
 
     // === 4. Контактна особа
-    const contactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+    let contactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "ContactPerson",
       calledMethod: "getContactPersons",
       methodProperties: { CounterpartyRef: RECIPIENT_REF },
     });
-    const CONTACT_RECIPIENT_REF = contactRes.data.data?.[0]?.Ref;
 
-    // === 5. Створюємо ТТН
+    let CONTACT_RECIPIENT_REF = contactRes.data.data?.[0]?.Ref;
+
+    if (!CONTACT_RECIPIENT_REF) {
+      console.log("ℹ️ Контактна особа не знайдена — створюємо нову...");
+
+      const newContactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+        apiKey: process.env.NP_API_KEY,
+        modelName: "ContactPerson",
+        calledMethod: "save",
+        methodProperties: {
+          CounterpartyRef: RECIPIENT_REF,
+          FirstName: first,
+          MiddleName: "",
+          LastName: last,
+          Phone: recipientPhone,
+        },
+      });
+
+      if (!newContactRes.data.success)
+        throw new Error(
+          `Не вдалося створити контактну особу: ${newContactRes.data.errors.join(", ")}`
+        );
+
+      CONTACT_RECIPIENT_REF = newContactRes.data.data[0].Ref;
+      console.log("✅ Контактна особа створена:", CONTACT_RECIPIENT_REF);
+    }
+
+    // === 5. Створення ТТН
     const ttnReq = {
       apiKey: process.env.NP_API_KEY,
       modelName: "InternetDocument",
@@ -98,12 +124,14 @@ export async function handleNovaPoshta(req, res) {
         PayerType: "Sender",
         PaymentMethod: "Cash",
         CargoType: "Parcel",
-        Weight: "0.3", // конверт
+        Weight: "0.3",
         VolumeGeneral: "0.001",
         ServiceType: "WarehouseWarehouse",
         SeatsAmount: "1",
         Cost: order.total_price || "0",
-        Description: order.line_items?.map((i) => i.name).join(", ") || order.name,
+        Description:
+          order.line_items?.map((i) => i.name).join(", ") ||
+          `Shopify order ${order.name}`,
         CitySender: SENDER_CITY_REF,
         SenderAddress: SENDER_ADDRESS_REF,
         ContactSender: CONTACT_SENDER_REF,
@@ -118,14 +146,18 @@ export async function handleNovaPoshta(req, res) {
       },
     };
 
-    const { data: ttnRes } = await axios.post("https://api.novaposhta.ua/v2.0/json/", ttnReq);
+    const { data: ttnRes } = await axios.post(
+      "https://api.novaposhta.ua/v2.0/json/",
+      ttnReq
+    );
+
     if (!ttnRes.success)
       throw new Error(`Не вдалося створити ТТН: ${ttnRes.errors?.join(", ")}`);
 
     const ttnData = ttnRes.data?.[0];
     console.log("✅ ТТН створено:", ttnData.IntDocNumber);
 
-    // === 6. Отримуємо офіційну етикетку PDF
+    // === 6. Отримуємо офіційний PDF
     const pdfRes = await axios.post(
       "https://api.novaposhta.ua/v2.0/json/",
       {
@@ -140,19 +172,15 @@ export async function handleNovaPoshta(req, res) {
       { responseType: "arraybuffer" }
     );
 
-    const pdfPath = `${LABELS_DIR}/label-${ttnData.IntDocNumber}.pdf`;
-    fs.writeFileSync(pdfPath, pdfRes.data);
-    console.log("🖨️ Офіційна етикетка збережена:", pdfPath);
+    // === 7. Віддаємо PDF у браузер
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="label-${ttnData.IntDocNumber}.pdf"`
+    );
+    res.send(pdfRes.data);
 
-    // === 7. Повертаємо URL
-    const baseUrl = `${req.protocol}://${req.get("host")}`;
-    const labelUrl = `${baseUrl}/labels/label-${ttnData.IntDocNumber}.pdf`;
-
-    return res.json({
-      message: "✅ ТТН створено і офіційна етикетка отримана",
-      ttn: ttnData.IntDocNumber,
-      label_url: labelUrl,
-    });
+    console.log("🖨️ Етикетка відкривається в браузері для друку.");
 
   } catch (err) {
     console.error("🚨 Помилка:", err.message);
