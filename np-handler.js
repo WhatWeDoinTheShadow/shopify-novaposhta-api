@@ -195,11 +195,11 @@ export async function handleNovaPoshta(req, res) {
             options: {
               copies: 1,
               fit_to_page: false,
-              scale: 0.72, // оптимально для Xprinter 100x100
+              scale: 0.72,
               paper: "Custom.100x100mm",
               dpi: 203,
               bin: "Default",
-              color: "monochrome",
+              color: false, // <-- ✅ виправлено: має бути булеве значення
             },
           },
           {
