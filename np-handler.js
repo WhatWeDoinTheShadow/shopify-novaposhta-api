@@ -197,9 +197,9 @@ export async function handleNovaPoshta(req, res) {
               fit_to_page: false,
               scale: 0.72,
               paper: "Custom.100x100mm",
-              dpi: 203,
+              dpi: "203", // ✅ має бути рядком
               bin: "Default",
-              color: false, // <-- ✅ виправлено: має бути булеве значення
+              color: false, // ✅ булеве значення
             },
           },
           {
