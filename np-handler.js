@@ -215,7 +215,7 @@ export async function handleNovaPoshta(req, res) {
               margins: "none",
               color: false,
               duplex: "one-sided", // ✅ правильне значення
-              rotate: "0",
+              rotate: 0, // ✅ як число
             },
           },
           {
