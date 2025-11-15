@@ -214,7 +214,7 @@ export async function handleNovaPoshta(req, res) {
               dpi: "203x203",
               margins: "none",
               color: false,
-              duplex: false,
+              duplex: "off",
               rotate: "0",
             },
           },
@@ -228,7 +228,10 @@ export async function handleNovaPoshta(req, res) {
 
         console.log("✅ Етикетка відправлена на друк через PrintNode");
       } catch (printErr) {
-        console.error("🚨 Помилка друку через PrintNode:", printErr.response?.data || printErr.message);
+        console.error(
+          "🚨 Помилка друку через PrintNode:",
+          printErr.response?.data || printErr.message
+        );
       }
     }
 
@@ -242,7 +245,6 @@ export async function handleNovaPoshta(req, res) {
       ttn: ttnData.IntDocNumber,
       label_url: publicUrl,
     });
-
   } catch (err) {
     console.error("🚨 Помилка:", err.message);
     res.status(500).json({ error: err.message });
