@@ -208,14 +208,14 @@ export async function handleNovaPoshta(req, res) {
             source: "Shopify AutoPrint",
             options: {
               copies: 1,
-              fit_to_page: false,
-              scale: 1.08,
-              paper: "Custom.100x100mm",
+              fit_to_page: true, // ✅ автоматичне підлаштування під сторінку
+              scale: 1.03, // ✅ трохи менший масштаб, щоб не обрізало
+              paper: "100x100mm", // ✅ явний розмір
               dpi: "203x203",
               margins: "none",
               color: false,
-              duplex: "one-sided", // ✅ правильне значення
-              rotate: 0, // ✅ як число
+              duplex: "one-sided",
+              rotate: 0,
             },
           },
           {
@@ -241,7 +241,7 @@ export async function handleNovaPoshta(req, res) {
 
     const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnData.IntDocNumber}.pdf`;
     return res.json({
-      message: "✅ ТТН створено, етикетка надрукована без полів",
+      message: "✅ ТТН створено, етикетка надрукована без обрізання",
       ttn: ttnData.IntDocNumber,
       label_url: publicUrl,
     });
