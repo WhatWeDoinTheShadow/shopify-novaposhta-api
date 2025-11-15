@@ -1,6 +1,7 @@
 import axios from "axios";
 import fs from "fs";
 import path from "path";
+import child_process from "child_process";
 
 const LABELS_DIR = path.resolve("./labels");
 if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
@@ -56,7 +57,7 @@ export async function handleNovaPoshta(req, res) {
 
     // === 3. Отримувач ===
     let cleanName = recipientName
-      ?.replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'\s]/g, "") // лише букви
+      ?.replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'\s]/g, "")
       ?.trim();
     if (!cleanName || cleanName.length < 2) cleanName = "Тест Отримувач";
 
@@ -102,7 +103,6 @@ export async function handleNovaPoshta(req, res) {
 
     let CONTACT_RECIPIENT_REF = contactRes.data.data?.[0]?.Ref;
 
-    // Якщо контакт не існує — створюємо
     if (!CONTACT_RECIPIENT_REF) {
       const newContact = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
         apiKey: process.env.NP_API_KEY,
@@ -173,23 +173,35 @@ export async function handleNovaPoshta(req, res) {
     const ttnData = ttnRes.data?.[0];
     console.log("✅ ТТН створено:", ttnData.IntDocNumber);
 
-    // === 7. Отримуємо офіційний PDF від Нової Пошти ===
+    // === 7. Отримуємо офіційний PDF від НП ===
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnData.IntDocNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
 
     console.log("📎 Офіційна етикетка НП:", labelUrl);
 
-    const pdfResponse = await axios.get(labelUrl, {
-      responseType: "arraybuffer",
-    });
-
+    const pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer" });
     const pdfPath = path.join(LABELS_DIR, `label-${ttnData.IntDocNumber}.pdf`);
     fs.writeFileSync(pdfPath, pdfResponse.data);
-    console.log("🖨️ PDF збережено:", pdfPath);
+    console.log("💾 PDF збережено:", pdfPath);
+
+    // === 8. Автодрук через системний принтер ===
+    try {
+      const printerName = "Xprinter_XP_480B";
+      console.log(`🖨️ Відправляю на друк через ${printerName}...`);
+      child_process.exec(`lp -d ${printerName} "${pdfPath}"`, (err, stdout, stderr) => {
+        if (err) {
+          console.error("🚨 Помилка друку:", err.message);
+        } else {
+          console.log("✅ Файл відправлено на друк:", stdout);
+        }
+      });
+    } catch (printErr) {
+      console.error("⚠️ Не вдалося надрукувати:", printErr.message);
+    }
 
     const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnData.IntDocNumber}.pdf`;
 
     return res.json({
-      message: "✅ ТТН створено, офіційна етикетка збережена",
+      message: "✅ ТТН створено, етикетка збережена і надіслана на друк",
       ttn: ttnData.IntDocNumber,
       label_url: publicUrl,
     });
