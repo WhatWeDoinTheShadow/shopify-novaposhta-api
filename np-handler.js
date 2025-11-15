@@ -268,8 +268,15 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
       (err, png) => (err ? reject(err) : resolve(png)))
   );
   const barcodeImage = await pdfDoc.embedPng(barcodeBuffer);
-  page.drawImage(barcodeImage, { x: 25, y: height - 230, width: 230, height: 45 });
+  page.drawImage(barcodeImage, { x: 25, y: height - 240, width: 230, height: 45 });
 
+  // ✍️ Підписи
+  page.drawLine({ start: { x: 10, y: 20 }, end: { x: 110, y: 20 }, thickness: 0.5, color: black });
+  page.drawLine({ start: { x: 160, y: 20 }, end: { x: 260, y: 20 }, thickness: 0.5, color: black });
+  page.drawText("Підпис відправника", { x: 20, y: 10, size: 6.5, font });
+  page.drawText("Підпис отримувача", { x: 175, y: 10, size: 6.5, font });
+
+  // 💾 Збереження
   const pdfBytes = await pdfDoc.save();
   const pdfPath = `${LABELS_DIR}/label-${npData.IntDocNumber}.pdf`;
   fs.writeFileSync(pdfPath, pdfBytes);
