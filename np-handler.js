@@ -198,45 +198,82 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
   const page = pdfDoc.addPage([283.46, 283.46]); // 100x100 мм
   const { width, height } = page.getSize();
   const black = rgb(0, 0, 0);
+  const margin = 10;
+  let y = height - 50;
 
-  // Верхній чорний блок
+  // 🔲 Верхній чорний блок
   page.drawRectangle({ x: 0, y: height - 40, width, height: 40, color: black });
   page.drawText(npData.CityRecipientDescription || "КИЇВ СХІД", {
-    x: 15,
+    x: 12,
     y: height - 25,
-    size: 12,
-    color: rgb(1, 1, 1),
+    size: 13,
     font: boldFont,
+    color: rgb(1, 1, 1),
   });
   if (cargoCode) {
     page.drawText(cargoCode, {
       x: width - 90,
       y: height - 25,
       size: 10,
-      color: rgb(1, 1, 1),
       font: boldFont,
+      color: rgb(1, 1, 1),
     });
   }
 
-  // Основний контент (усередині полів)
-  const margin = 10;
-  let y = height - 55;
+  // 🧾 Відправник
+  const senderBlock = [
+    "ВІД: БУЗДИГАН ЛАРИСА ВАСИЛІВНА ФОП",
+    "Львів, Відділення №31",
+    "093 253 24 32",
+  ];
+  senderBlock.forEach((text, i) =>
+    page.drawText(text, {
+      x: margin,
+      y: y - i * 9,
+      size: 7,
+      font,
+    })
+  );
 
+  // 📦 Одержувач
+  const receiverBlock = [
+    `КОМУ: ${order.shipping_address?.name || "Отримувач"}`,
+    `${order.shipping_address?.city || ""}, ${order.shipping_address?.address1 || ""}`,
+    recipientPhone,
+  ];
+  receiverBlock.forEach((text, i) =>
+    page.drawText(text, {
+      x: width / 2,
+      y: y - i * 9,
+      size: 7,
+      font,
+    })
+  );
+  y -= 35;
+
+  // 💰 Вартість / опис
   const cost = npData.Cost || "0";
   const description = order.line_items?.map((i) => i.name).join(", ") || order.name;
   const shortTTN = npData.IntDocNumber.slice(-3);
   const line = isCOD
     ? `Вартість дост.: ${cost} грн (одерж., г-ка), Конт. опл: ${afterPaymentAmount} грн, н/з: ${shortTTN}, ${description}`
     : `Вартість дост.: ${cost} грн (одерж., г-ка), н/з: ${shortTTN}, ${description}`;
-  page.drawText(line.slice(0, 85), { x: margin, y: (y -= 12), size: 7, font });
+  page.drawText(line.substring(0, 115), { x: margin, y: (y -= 10), size: 7, font });
 
+  // 📏 Таблиця параметрів
   const volume = npData.VolumeGeneral || "0.001";
-  page.drawText(`${volume} (Об'єм)`, { x: margin, y: (y -= 20), size: 8, font: boldFont });
-  page.drawText("ДВ 1    1", { x: width - 70, y, size: 9, font: boldFont });
+  y -= 18;
+  page.drawLine({ start: { x: 0, y: y + 15 }, end: { x: width, y: y + 15 }, thickness: 1, color: black });
+  page.drawText(`${volume}`, { x: margin + 10, y: y, size: 9, font: boldFont });
+  page.drawText("(Об'єм)", { x: margin + 5, y: y - 10, size: 6, font });
+  page.drawText("ДВ", { x: width / 2 - 20, y: y, size: 9, font: boldFont });
+  page.drawText("1", { x: width / 2 - 15, y: y - 10, size: 8, font: boldFont });
+  page.drawText("1", { x: width - 50, y: y, size: 9, font: boldFont });
+  page.drawText("Місце", { x: width - 58, y: y - 10, size: 6, font });
+  page.drawLine({ start: { x: 0, y: y - 20 }, end: { x: width, y: y - 20 }, thickness: 1, color: black });
 
+  // 🧾 ТТН і штрихкод
   const formattedTTN = npData.IntDocNumber.replace(/(\d{2})(?=\d)/g, "$1 ").trim();
-  page.drawText(formattedTTN, { x: width / 2 - 60, y: 35, size: 14, font: boldFont });
-
   const barcodeBuffer = await new Promise((resolve, reject) =>
     bwipjs.toBuffer(
       { bcid: "code128", text: npData.IntDocNumber, scale: 3, height: 25, includetext: false },
@@ -244,8 +281,10 @@ async function generateLabel(npData, order, cargoCode, isCOD, afterPaymentAmount
     )
   );
   const barcodeImage = await pdfDoc.embedPng(barcodeBuffer);
-  page.drawImage(barcodeImage, { x: 25, y: 55, width: 230, height: 45 });
+  page.drawImage(barcodeImage, { x: 25, y: 45, width: 230, height: 45 });
+  page.drawText(formattedTTN, { x: width / 2 - 60, y: 30, size: 13, font: boldFont });
 
+  // 💾 Збереження PDF
   const pdfBytes = await pdfDoc.save();
   const pdfPath = `${LABELS_DIR}/label-${npData.IntDocNumber}.pdf`;
   fs.writeFileSync(pdfPath, pdfBytes);
