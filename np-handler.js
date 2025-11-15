@@ -5,14 +5,19 @@ import path from "path";
 const LABELS_DIR = path.resolve("./labels");
 if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
-let printedOrders = new Set(); // 🧠 антидубль
+const PRINTED_DB = path.resolve("./printed_orders.json");
+if (!fs.existsSync(PRINTED_DB)) fs.writeFileSync(PRINTED_DB, "{}");
+
+let printedOrders = JSON.parse(fs.readFileSync(PRINTED_DB, "utf8"));
 
 export async function handleNovaPoshta(req, res) {
   const order = req.body;
   console.log("📦 Нове замовлення з Shopify:", order.name);
 
-  if (printedOrders.has(order.name)) {
-    console.log("⚠️ Це замовлення вже надруковано:", order.name);
+  const now = Date.now();
+  const lastPrinted = printedOrders[order.name];
+  if (lastPrinted && now - lastPrinted < 10 * 60 * 1000) {
+    console.log("⚠️ Замовлення вже було надруковане нещодавно:", order.name);
     return res.json({ message: "🟡 Вже надруковано", order: order.name });
   }
 
@@ -104,7 +109,6 @@ export async function handleNovaPoshta(req, res) {
 
     let CONTACT_RECIPIENT_REF = contactRes.data.data?.[0]?.Ref;
 
-    // Якщо контактна особа не знайдена — створюємо нову
     if (!CONTACT_RECIPIENT_REF) {
       console.log("ℹ️ Контактна особа не знайдена — створюємо нову...");
       const newContactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
@@ -186,7 +190,7 @@ export async function handleNovaPoshta(req, res) {
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
-    // === 8. Автодрук через PrintNode (фікс масштабу і без полів) ===
+    // === 8. Автодрук через PrintNode ===
     if (process.env.PRINTNODE_API_KEY && process.env.PRINTNODE_PRINTER_ID) {
       try {
         console.log("🖨️ Відправляю PDF через PrintNode...");
@@ -204,12 +208,14 @@ export async function handleNovaPoshta(req, res) {
             source: "Shopify AutoPrint",
             options: {
               copies: 1,
-              fit_to_page: true,
-              scale: 1.0,
+              fit_to_page: false,
+              scale: 1.08,
               paper: "Custom.100x100mm",
-              dpi: "203",
+              dpi: "203x203",
               margins: "none",
               color: false,
+              duplex: false,
+              rotate: "0",
             },
           },
           {
@@ -226,7 +232,9 @@ export async function handleNovaPoshta(req, res) {
       }
     }
 
-    printedOrders.add(order.name); // 🧠 запам’ятати, щоб не друкувати двічі
+    // 🧠 Записуємо, щоб не друкувати повторно
+    printedOrders[order.name] = Date.now();
+    fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
     const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnData.IntDocNumber}.pdf`;
     return res.json({
