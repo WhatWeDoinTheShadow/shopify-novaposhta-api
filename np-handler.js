@@ -41,7 +41,7 @@ export async function handleNovaPoshta(req, res) {
     const paymentMethod = order.payment_gateway_names?.[0] || "";
 
     console.log("🏙️ Місто:", cityName);
-    console.log("🏤 Відділення:", warehouseName);
+    console.log("🏤 Відділення (сире):", warehouseName);
     console.log("💰 Оплата:", paymentMethod);
 
     // === 1. CityRef ===
@@ -54,13 +54,25 @@ export async function handleNovaPoshta(req, res) {
     const cityRef = cityRes.data.data?.[0]?.Ref;
     if (!cityRef) throw new Error(`Не знайдено місто: ${cityName}`);
 
-    // === 2. WarehouseRef ===
+    // === 2. WarehouseRef (з очищенням назви) ===
+    let cleanWarehouseName = warehouseName
+      .replace(/нова\s?пошта/gi, "")
+      .replace(/nova\s?poshta/gi, "")
+      .replace(/відділення/gi, "")
+      .replace(/№/g, "")
+      .trim();
+
+    // якщо лишилась лише цифра — залишаємо її
+    const onlyNumber = cleanWarehouseName.match(/\d+/)?.[0] || "1";
+    console.log(`🏤 Очищене відділення: ${onlyNumber}`);
+
     const whRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "AddressGeneral",
       calledMethod: "getWarehouses",
-      methodProperties: { CityRef: cityRef, FindByString: warehouseName },
+      methodProperties: { CityRef: cityRef, FindByString: onlyNumber },
     });
+
     const warehouseRef = whRes.data.data?.[0]?.Ref;
     if (!warehouseRef) throw new Error(`Не знайдено відділення: ${warehouseName}`);
 
@@ -208,9 +220,9 @@ export async function handleNovaPoshta(req, res) {
             source: "Shopify AutoPrint",
             options: {
               copies: 1,
-              fit_to_page: true, // ✅ автоматичне підлаштування під сторінку
-              scale: 1.03, // ✅ трохи менший масштаб, щоб не обрізало
-              paper: "100x100mm", // ✅ явний розмір
+              fit_to_page: true,
+              scale: 1.03,
+              paper: "100x100mm",
               dpi: "203x203",
               margins: "none",
               color: false,
