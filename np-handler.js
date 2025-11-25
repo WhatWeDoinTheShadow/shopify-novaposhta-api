@@ -62,7 +62,6 @@ export async function handleNovaPoshta(req, res) {
       .replace(/№/g, "")
       .trim();
 
-    // якщо лишилась лише цифра — залишаємо її
     const onlyNumber = cleanWarehouseName.match(/\d+/)?.[0] || "1";
     console.log(`🏤 Очищене відділення: ${onlyNumber}`);
 
@@ -157,7 +156,7 @@ export async function handleNovaPoshta(req, res) {
       modelName: "InternetDocument",
       calledMethod: "save",
       methodProperties: {
-        PayerType: "Sender",
+        PayerType: "Recipient", // ✅ тепер клієнт платить за доставку
         PaymentMethod: "Cash",
         CargoType: "Parcel",
         Weight: "0.3",
@@ -247,13 +246,12 @@ export async function handleNovaPoshta(req, res) {
       }
     }
 
-    // 🧠 Записуємо, щоб не друкувати повторно
     printedOrders[order.name] = Date.now();
     fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
     const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnData.IntDocNumber}.pdf`;
     return res.json({
-      message: "✅ ТТН створено, етикетка надрукована без обрізання",
+      message: "✅ ТТН створено, клієнт сплачує доставку, етикетка надрукована",
       ttn: ttnData.IntDocNumber,
       label_url: publicUrl,
     });
