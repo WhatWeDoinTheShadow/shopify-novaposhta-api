@@ -36,12 +36,23 @@ export async function handleNovaPoshta(req, res) {
     const cityName = order.shipping_address?.city || "Київ";
     const warehouseName = order.shipping_address?.address1 || "Відділення №1";
     const recipientName = order.shipping_address?.name || "Тестовий Отримувач";
-    const recipientPhone =
-      order.shipping_address?.phone?.replace(/\D/g, "") || "380501112233";
+
+    // === Обробка номера телефону ===
+    let recipientPhone = order.shipping_address?.phone?.replace(/\D/g, "") || "";
+    if (recipientPhone.startsWith("0")) recipientPhone = "38" + recipientPhone;
+    if (!recipientPhone.startsWith("380"))
+      recipientPhone = "380" + recipientPhone.replace(/^(\+)?(38)?/, "");
+
+    if (!/^380\d{9}$/.test(recipientPhone)) {
+      console.warn(`⚠️ Невірний номер телефону: ${recipientPhone}, замінюємо на тестовий`);
+      recipientPhone = "380501112233"; // fallback
+    }
+
     const paymentMethod = order.payment_gateway_names?.[0] || "";
 
     console.log("🏙️ Місто:", cityName);
     console.log("🏤 Відділення (сире):", warehouseName);
+    console.log("📞 Телефон:", recipientPhone);
     console.log("💰 Оплата:", paymentMethod);
 
     // === 1. CityRef ===
@@ -156,7 +167,7 @@ export async function handleNovaPoshta(req, res) {
       modelName: "InternetDocument",
       calledMethod: "save",
       methodProperties: {
-        PayerType: "Recipient", // ✅ тепер клієнт платить за доставку
+        PayerType: "Recipient", // ✅ клієнт платить за доставку
         PaymentMethod: "Cash",
         CargoType: "Parcel",
         Weight: "0.3",
@@ -246,6 +257,7 @@ export async function handleNovaPoshta(req, res) {
       }
     }
 
+    // 🧠 Записуємо, щоб не друкувати повторно
     printedOrders[order.name] = Date.now();
     fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
