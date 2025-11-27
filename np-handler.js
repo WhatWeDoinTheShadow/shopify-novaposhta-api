@@ -134,97 +134,74 @@ export async function handleNovaPoshta(req, res) {
       CONTACT_RECIPIENT_REF = newContactRes.data.data[0].Ref;
     }
 
-    // === 5. Payment link через Storefront API ===
+    // === 5. Payment link через Monobank ===
     let paymentUrl = null;
-    const isCOD = /cash|cod|налож/i.test(paymentMethod);
-    const afterPaymentAmount = isCOD ? order.total_price : "0";
+    let monoInvoiceId = null;
 
-    if (isCOD) {
+    if (!process.env.MONO_MERCHANT_TOKEN) {
+      console.warn("⚠️ MONO_MERCHANT_TOKEN відсутній, пропускаємо створення інвойсу monobank");
+    } else {
       try {
-        console.log("💳 Генеруємо payment link через Storefront API...");
-        const shopifyStore = process.env.SHOPIFY_STORE;
-        const storefrontToken = process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN;
-        const adminToken = process.env.SHOPIFY_ADMIN_API_KEY;
+        console.log("💳 Генеруємо payment link через Monobank...");
 
-        const query = `
-          mutation checkoutCreate($input: CheckoutCreateInput!) {
-            checkoutCreate(input: $input) {
-              checkout {
-                id
-                webUrl
-              }
-              checkoutUserErrors {
-                message
-              }
-            }
-          }
-        `;
+        const total = parseFloat(order.total_price || "0");
+        const amountInCents = Math.round(total * 100);
 
-        const variables = {
-          input: {
-            email: order.email,
-            lineItems: order.line_items.map((item) => ({
-              variantId: `gid://shopify/ProductVariant/${item.variant_id}`,
-              quantity: item.quantity,
-            })),
-            shippingAddress: {
-              firstName: order.shipping_address?.first_name || "Customer",
-              lastName: order.shipping_address?.last_name || "Shopify",
-              address1: order.shipping_address?.address1,
-              city: order.shipping_address?.city,
-              province: order.shipping_address?.province,
-              zip: order.shipping_address?.zip,
-              country: order.shipping_address?.country,
-              phone: recipientPhone,
-            },
+        const basketOrder = (order.line_items || []).map((item) => {
+          const lineTotal = parseFloat(item.price || "0") * item.quantity;
+          return {
+            name: item.name || "Товар",
+            qty: item.quantity,
+            sum: Math.round(lineTotal * 100),
+            code: String(item.product_id || item.sku || item.variant_id || ""),
+          };
+        });
+
+        const baseUrl =
+          process.env.BASE_URL || `${req.protocol}://${req.get("host")}`;
+
+        const monoBody = {
+          amount: amountInCents,
+          ccy: 980,
+          merchantPaymInfo: {
+            reference: String(order.id || order.name),
+            destination: `Оплата замовлення ${order.name}`,
+            basketOrder,
           },
+          redirectUrl: `${baseUrl}/mono/payment/redirect`,
+          successUrl: `${baseUrl}/mono/payment/success`,
+          failUrl: `${baseUrl}/mono/payment/fail`,
+          webHookUrl: `${baseUrl}/api/mono/webhook`,
         };
 
-        const storefrontRes = await axios.post(
-          `https://${shopifyStore}/api/2024-10/graphql.json`,
-          { query, variables },
+        const monoRes = await axios.post(
+          "https://api.monobank.ua/api/merchant/invoice/create",
+          monoBody,
           {
             headers: {
-              "X-Shopify-Storefront-Access-Token": storefrontToken,
               "Content-Type": "application/json",
+              "X-Token": process.env.MONO_MERCHANT_TOKEN,
             },
           }
         );
 
-        const checkout = storefrontRes.data?.data?.checkoutCreate?.checkout;
-        paymentUrl = checkout?.webUrl;
-        console.log("✅ Лінк для оплати:", paymentUrl);
+        monoInvoiceId = monoRes.data.invoiceId;
+        paymentUrl = monoRes.data.pageUrl;
 
-        if (paymentUrl) {
-          await axios.put(
-            `https://${shopifyStore}/admin/api/2024-10/orders/${order.id}.json`,
-            {
-              order: {
-                id: order.id,
-                metafields: [
-                  {
-                    namespace: "custom",
-                    key: "payment_link",
-                    value: paymentUrl,
-                    type: "url",
-                  },
-                ],
-              },
-            },
-            {
-              headers: {
-                "X-Shopify-Access-Token": adminToken,
-              },
-            }
-          );
-          console.log("🔗 Payment link додано у метафілд Shopify");
-        }
+        console.log("✅ Monobank invoice:", monoInvoiceId);
+        console.log("✅ Лінк для оплати (Monobank):", paymentUrl);
       } catch (err) {
-        console.error("🚨 Помилка при створенні payment link через Storefront:", err.message);
+        console.error(
+          "🚨 Помилка при створенні payment link через Monobank:",
+          err.response?.data || err.message
+        );
       }
     }
 
     // === 6. ТТН ===
+    const isCOD = /cash|cod|налож/i.test(paymentMethod);
+    const afterPaymentAmount = isCOD ? order.total_price : "0";
+
     const npRequest = {
       apiKey: process.env.NP_API_KEY,
       modelName: "InternetDocument",
@@ -238,7 +215,9 @@ export async function handleNovaPoshta(req, res) {
         ServiceType: "WarehouseWarehouse",
         SeatsAmount: "1",
         Cost: order.total_price || "0",
-        Description: order.line_items?.map((i) => i.name).join(", ") || `Shopify order ${order.name}`,
+        Description:
+          order.line_items?.map((i) => i.name).join(", ") ||
+          `Shopify order ${order.name}`,
         CitySender: SENDER_CITY_REF,
         SenderAddress: SENDER_ADDRESS_REF,
         ContactSender: CONTACT_SENDER_REF,
@@ -253,7 +232,10 @@ export async function handleNovaPoshta(req, res) {
       },
     };
 
-    const { data: ttnRes } = await axios.post("https://api.novaposhta.ua/v2.0/json/", npRequest);
+    const { data: ttnRes } = await axios.post(
+      "https://api.novaposhta.ua/v2.0/json/",
+      npRequest
+    );
     if (!ttnRes.success)
       throw new Error(`Не вдалося створити ТТН: ${ttnRes.errors?.join(", ")}`);
 
@@ -263,7 +245,10 @@ export async function handleNovaPoshta(req, res) {
     // === 7. Етикетка ===
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnData.IntDocNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
     const pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer" });
-    const pdfPath = path.join(LABELS_DIR, `label-${ttnData.IntDocNumber}.pdf`);
+    const pdfPath = path.join(
+      LABELS_DIR,
+      `label-${ttnData.IntDocNumber}.pdf`
+    );
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
@@ -290,10 +275,12 @@ export async function handleNovaPoshta(req, res) {
     const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnData.IntDocNumber}.pdf`;
 
     return res.json({
-      message: "✅ ТТН створено, клієнт сплачує доставку, етикетка надрукована",
+      message:
+        "✅ ТТН створено, етикетка надрукована. Лінк на оплату — Monobank invoice",
       ttn: ttnData.IntDocNumber,
       label_url: publicUrl,
       payment_link: paymentUrl || "—",
+      mono_invoice_id: monoInvoiceId || "—",
     });
   } catch (err) {
     console.error("🚨 Помилка:", err.message);
