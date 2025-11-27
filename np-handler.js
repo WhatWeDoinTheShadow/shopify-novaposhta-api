@@ -134,41 +134,66 @@ export async function handleNovaPoshta(req, res) {
       CONTACT_RECIPIENT_REF = newContactRes.data.data[0].Ref;
     }
 
-    // === 5. Payment link через Draft Order ===
+    // === 5. Payment link через Storefront API ===
     let paymentUrl = null;
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
     const afterPaymentAmount = isCOD ? order.total_price : "0";
 
     if (isCOD) {
       try {
-        console.log("💳 Створюємо Draft Order для payment link...");
+        console.log("💳 Генеруємо payment link через Storefront API...");
         const shopifyStore = process.env.SHOPIFY_STORE;
-        const shopifyKey = process.env.SHOPIFY_ADMIN_API_KEY;
+        const storefrontToken = process.env.SHOPIFY_STOREFRONT_ACCESS_TOKEN;
+        const adminToken = process.env.SHOPIFY_ADMIN_API_KEY;
 
-        const draftRes = await axios.post(
-          `https://${shopifyStore}/admin/api/2024-10/draft_orders.json`,
-          {
-            draft_order: {
-              email: order.email,
-              shipping_address: order.shipping_address,
-              line_items: order.line_items.map((i) => ({
-                title: i.name,
-                quantity: i.quantity,
-                price: i.price,
-              })),
-              use_customer_default_address: true,
+        const query = `
+          mutation checkoutCreate($input: CheckoutCreateInput!) {
+            checkoutCreate(input: $input) {
+              checkout {
+                id
+                webUrl
+              }
+              checkoutUserErrors {
+                message
+              }
+            }
+          }
+        `;
+
+        const variables = {
+          input: {
+            email: order.email,
+            lineItems: order.line_items.map((item) => ({
+              variantId: `gid://shopify/ProductVariant/${item.variant_id}`,
+              quantity: item.quantity,
+            })),
+            shippingAddress: {
+              firstName: order.shipping_address?.first_name || "Customer",
+              lastName: order.shipping_address?.last_name || "Shopify",
+              address1: order.shipping_address?.address1,
+              city: order.shipping_address?.city,
+              province: order.shipping_address?.province,
+              zip: order.shipping_address?.zip,
+              country: order.shipping_address?.country,
+              phone: recipientPhone,
             },
           },
+        };
+
+        const storefrontRes = await axios.post(
+          `https://${shopifyStore}/api/2024-10/graphql.json`,
+          { query, variables },
           {
             headers: {
-              "X-Shopify-Access-Token": shopifyKey,
+              "X-Shopify-Storefront-Access-Token": storefrontToken,
               "Content-Type": "application/json",
             },
           }
         );
 
-        paymentUrl = draftRes.data?.draft_order?.invoice_url;
-        console.log("✅ Payment link:", paymentUrl);
+        const checkout = storefrontRes.data?.data?.checkoutCreate?.checkout;
+        paymentUrl = checkout?.webUrl;
+        console.log("✅ Лінк для оплати:", paymentUrl);
 
         if (paymentUrl) {
           await axios.put(
@@ -187,13 +212,15 @@ export async function handleNovaPoshta(req, res) {
               },
             },
             {
-              headers: { "X-Shopify-Access-Token": shopifyKey },
+              headers: {
+                "X-Shopify-Access-Token": adminToken,
+              },
             }
           );
           console.log("🔗 Payment link додано у метафілд Shopify");
         }
       } catch (err) {
-        console.error("🚨 Помилка при створенні Draft Order:", err.message);
+        console.error("🚨 Помилка при створенні payment link через Storefront:", err.message);
       }
     }
 
