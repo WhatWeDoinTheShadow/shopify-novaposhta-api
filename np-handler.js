@@ -160,7 +160,27 @@ export async function handleNovaPoshta(req, res) {
     // === 5. Післяплата ===
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
     const afterPaymentAmount = isCOD ? order.total_price : "0";
-
+await axios.put(
+  `https://${process.env.SHOPIFY_STORE}/admin/api/2024-10/orders/${order.id}.json`,
+  {
+    order: {
+      id: order.id,
+      metafields: [
+        {
+          namespace: "custom",
+          key: "payment_link",
+          value: paymentUrl,
+          type: "url",
+        },
+      ],
+    },
+  },
+  {
+    headers: {
+      "X-Shopify-Access-Token": process.env.SHOPIFY_ADMIN_API_KEY,
+    },
+  }
+);
     // === 6. Створення ТТН ===
     const npRequest = {
       apiKey: process.env.NP_API_KEY,
