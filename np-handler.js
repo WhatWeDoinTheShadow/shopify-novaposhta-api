@@ -36,23 +36,27 @@ export async function handleNovaPoshta(req, res) {
     const cityName = order.shipping_address?.city || "Київ";
     const warehouseName = order.shipping_address?.address1 || "Відділення №1";
     const recipientName = order.shipping_address?.name || "Тестовий Отримувач";
+    let rawPhone = order.shipping_address?.phone || "";
 
-    // === Обробка номера телефону ===
-    let recipientPhone = order.shipping_address?.phone?.replace(/\D/g, "") || "";
+    // === Надійне форматування телефону ===
+    let recipientPhone = rawPhone.replace(/\D/g, ""); // прибрати все, крім цифр
     if (recipientPhone.startsWith("0")) recipientPhone = "38" + recipientPhone;
+    if (recipientPhone.startsWith("80")) recipientPhone = "3" + recipientPhone;
     if (!recipientPhone.startsWith("380"))
       recipientPhone = "380" + recipientPhone.replace(/^(\+)?(38)?/, "");
 
+    if (recipientPhone.length > 12) recipientPhone = recipientPhone.slice(0, 12);
+
     if (!/^380\d{9}$/.test(recipientPhone)) {
-      console.warn(`⚠️ Невірний номер телефону: ${recipientPhone}, замінюємо на тестовий`);
-      recipientPhone = "380501112233"; // fallback
+      console.warn(`⚠️ Невірний номер телефону: ${recipientPhone} (${rawPhone}), замінюємо на тестовий`);
+      recipientPhone = "380501112233";
     }
 
     const paymentMethod = order.payment_gateway_names?.[0] || "";
 
     console.log("🏙️ Місто:", cityName);
     console.log("🏤 Відділення (сире):", warehouseName);
-    console.log("📞 Телефон:", recipientPhone);
+    console.log("📞 Телефон (очищений):", recipientPhone);
     console.log("💰 Оплата:", paymentMethod);
 
     // === 1. CityRef ===
@@ -65,14 +69,13 @@ export async function handleNovaPoshta(req, res) {
     const cityRef = cityRes.data.data?.[0]?.Ref;
     if (!cityRef) throw new Error(`Не знайдено місто: ${cityName}`);
 
-    // === 2. WarehouseRef (з очищенням назви) ===
+    // === 2. WarehouseRef ===
     let cleanWarehouseName = warehouseName
       .replace(/нова\s?пошта/gi, "")
       .replace(/nova\s?poshta/gi, "")
       .replace(/відділення/gi, "")
       .replace(/№/g, "")
       .trim();
-
     const onlyNumber = cleanWarehouseName.match(/\d+/)?.[0] || "1";
     console.log(`🏤 Очищене відділення: ${onlyNumber}`);
 
@@ -82,7 +85,6 @@ export async function handleNovaPoshta(req, res) {
       calledMethod: "getWarehouses",
       methodProperties: { CityRef: cityRef, FindByString: onlyNumber },
     });
-
     const warehouseRef = whRes.data.data?.[0]?.Ref;
     if (!warehouseRef) throw new Error(`Не знайдено відділення: ${warehouseName}`);
 
@@ -128,7 +130,6 @@ export async function handleNovaPoshta(req, res) {
       calledMethod: "getContactPersons",
       methodProperties: { CounterpartyRef: RECIPIENT_REF },
     });
-
     let CONTACT_RECIPIENT_REF = contactRes.data.data?.[0]?.Ref;
 
     if (!CONTACT_RECIPIENT_REF) {
@@ -145,11 +146,10 @@ export async function handleNovaPoshta(req, res) {
         },
       });
 
-      if (!newContactRes.data.success) {
+      if (!newContactRes.data.success)
         throw new Error(
           `Не вдалося створити контактну особу: ${newContactRes.data.errors.join(", ")}`
         );
-      }
 
       CONTACT_RECIPIENT_REF = newContactRes.data.data[0].Ref;
       console.log("✅ Контактна особа створена:", CONTACT_RECIPIENT_REF);
@@ -167,7 +167,7 @@ export async function handleNovaPoshta(req, res) {
       modelName: "InternetDocument",
       calledMethod: "save",
       methodProperties: {
-        PayerType: "Recipient", // ✅ клієнт платить за доставку
+        PayerType: "Recipient", // клієнт платить
         PaymentMethod: "Cash",
         CargoType: "Parcel",
         Weight: "0.3",
@@ -192,10 +192,7 @@ export async function handleNovaPoshta(req, res) {
       },
     };
 
-    const { data: ttnRes } = await axios.post(
-      "https://api.novaposhta.ua/v2.0/json/",
-      npRequest
-    );
+    const { data: ttnRes } = await axios.post("https://api.novaposhta.ua/v2.0/json/", npRequest);
 
     if (!ttnRes.success)
       throw new Error(`Не вдалося створити ТТН: ${ttnRes.errors?.join(", ")}`);
@@ -203,7 +200,7 @@ export async function handleNovaPoshta(req, res) {
     const ttnData = ttnRes.data?.[0];
     console.log("✅ ТТН створено:", ttnData.IntDocNumber);
 
-    // === 7. Отримуємо офіційний PDF від НП ===
+    // === 7. Етикетка ===
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnData.IntDocNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
     console.log("📎 Етикетка:", labelUrl);
 
@@ -212,11 +209,10 @@ export async function handleNovaPoshta(req, res) {
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
-    // === 8. Автодрук через PrintNode ===
+    // === 8. Автодрук ===
     if (process.env.PRINTNODE_API_KEY && process.env.PRINTNODE_PRINTER_ID) {
       try {
         console.log("🖨️ Відправляю PDF через PrintNode...");
-
         const pdfBuffer = fs.readFileSync(pdfPath);
         const pdfBase64 = pdfBuffer.toString("base64");
 
@@ -228,36 +224,18 @@ export async function handleNovaPoshta(req, res) {
             contentType: "pdf_base64",
             content: pdfBase64,
             source: "Shopify AutoPrint",
-            options: {
-              copies: 1,
-              fit_to_page: true,
-              scale: 1.03,
-              paper: "100x100mm",
-              dpi: "203x203",
-              margins: "none",
-              color: false,
-              duplex: "one-sided",
-              rotate: 0,
-            },
           },
           {
-            auth: {
-              username: process.env.PRINTNODE_API_KEY,
-              password: "",
-            },
+            auth: { username: process.env.PRINTNODE_API_KEY, password: "" },
           }
         );
 
         console.log("✅ Етикетка відправлена на друк через PrintNode");
-      } catch (printErr) {
-        console.error(
-          "🚨 Помилка друку через PrintNode:",
-          printErr.response?.data || printErr.message
-        );
+      } catch (err) {
+        console.error("🚨 Помилка друку через PrintNode:", err.response?.data || err.message);
       }
     }
 
-    // 🧠 Записуємо, щоб не друкувати повторно
     printedOrders[order.name] = Date.now();
     fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
