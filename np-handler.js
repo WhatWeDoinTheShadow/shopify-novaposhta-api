@@ -26,8 +26,8 @@ export async function handleNovaPoshta(req, res) {
 
   try {
     // === Дані відправника ===
-    const SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626"; // Львів
-    const SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d"; // Відділення №31
+    const SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626";
+    const SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d";
     const SENDER_REF = "6bcb6d88-16de-11ef-bcd0-48df37b921da";
     const CONTACT_SENDER_REF = "f8caa074-1740-11ef-bcd0-48df37b921da";
     const SENDERS_PHONE = "380932532432";
@@ -53,7 +53,7 @@ export async function handleNovaPoshta(req, res) {
 
     console.log("🏙️ Місто:", cityName);
     console.log("🏤 Відділення (сире):", warehouseName);
-    console.log("📞 Телефон (очищений):", recipientPhone);
+    console.log("📞 Телефон:", recipientPhone);
     console.log("💰 Оплата:", paymentMethod);
 
     // === 1. CityRef ===
@@ -74,8 +74,6 @@ export async function handleNovaPoshta(req, res) {
       .replace(/№/g, "")
       .trim();
     const onlyNumber = cleanWarehouseName.match(/\d+/)?.[0] || "1";
-    console.log(`🏤 Очищене відділення: ${onlyNumber}`);
-
     const whRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
       modelName: "AddressGeneral",
@@ -95,7 +93,6 @@ export async function handleNovaPoshta(req, res) {
     }
     first = first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
     last = last.charAt(0).toUpperCase() + last.slice(1).toLowerCase();
-    console.log(`👤 Отримувач: ${first} ${last}`);
 
     const recipientRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
       apiKey: process.env.NP_API_KEY,
@@ -110,10 +107,8 @@ export async function handleNovaPoshta(req, res) {
         CityRef: cityRef,
       },
     });
-
     if (!recipientRes.data.success)
       throw new Error(`Не вдалося створити отримувача: ${recipientRes.data.errors.join(", ")}`);
-
     const RECIPIENT_REF = recipientRes.data.data[0].Ref;
 
     // === 4. Контактна особа ===
@@ -124,9 +119,7 @@ export async function handleNovaPoshta(req, res) {
       methodProperties: { CounterpartyRef: RECIPIENT_REF },
     });
     let CONTACT_RECIPIENT_REF = contactRes.data.data?.[0]?.Ref;
-
     if (!CONTACT_RECIPIENT_REF) {
-      console.log("ℹ️ Контактна особа не знайдена — створюємо нову...");
       const newContactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
         apiKey: process.env.NP_API_KEY,
         modelName: "ContactPerson",
@@ -138,39 +131,32 @@ export async function handleNovaPoshta(req, res) {
           Phone: recipientPhone,
         },
       });
-
-      if (!newContactRes.data.success)
-        throw new Error(`Не вдалося створити контактну особу: ${newContactRes.data.errors.join(", ")}`);
-
       CONTACT_RECIPIENT_REF = newContactRes.data.data[0].Ref;
-      console.log("✅ Контактна особа створена:", CONTACT_RECIPIENT_REF);
-    } else {
-      console.log("✅ Контактна особа знайдена:", CONTACT_RECIPIENT_REF);
     }
 
-    // === 5. Генерація payment link ===
+    // === 5. Payment link через Draft Order ===
     let paymentUrl = null;
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
     const afterPaymentAmount = isCOD ? order.total_price : "0";
 
     if (isCOD) {
       try {
-        console.log("💳 Генеруємо payment link у Shopify...");
-
+        console.log("💳 Створюємо Draft Order для payment link...");
+        const shopifyStore = process.env.SHOPIFY_STORE;
         const shopifyKey = process.env.SHOPIFY_ADMIN_API_KEY;
-        const shopifyStore = process.env.SHOPIFY_STORE; // наприклад: "myshop.myshopify.com"
 
-        const checkoutRes = await axios.post(
-          `https://${shopifyStore}/admin/api/2024-10/checkouts.json`,
+        const draftRes = await axios.post(
+          `https://${shopifyStore}/admin/api/2024-10/draft_orders.json`,
           {
-            checkout: {
+            draft_order: {
               email: order.email,
-              line_items: order.line_items.map((i) => ({
-                variant_id: i.variant_id,
-                quantity: i.quantity,
-              })),
               shipping_address: order.shipping_address,
-              billing_address: order.billing_address || order.shipping_address,
+              line_items: order.line_items.map((i) => ({
+                title: i.name,
+                quantity: i.quantity,
+                price: i.price,
+              })),
+              use_customer_default_address: true,
             },
           },
           {
@@ -181,10 +167,9 @@ export async function handleNovaPoshta(req, res) {
           }
         );
 
-        paymentUrl = checkoutRes.data.checkout?.web_url;
-        console.log("✅ Лінк для оплати:", paymentUrl);
+        paymentUrl = draftRes.data?.draft_order?.invoice_url;
+        console.log("✅ Payment link:", paymentUrl);
 
-        // Зберігаємо у метафілд замовлення
         if (paymentUrl) {
           await axios.put(
             `https://${shopifyStore}/admin/api/2024-10/orders/${order.id}.json`,
@@ -202,19 +187,17 @@ export async function handleNovaPoshta(req, res) {
               },
             },
             {
-              headers: {
-                "X-Shopify-Access-Token": shopifyKey,
-              },
+              headers: { "X-Shopify-Access-Token": shopifyKey },
             }
           );
           console.log("🔗 Payment link додано у метафілд Shopify");
         }
       } catch (err) {
-        console.error("🚨 Помилка при створенні payment link:", err.message);
+        console.error("🚨 Помилка при створенні Draft Order:", err.message);
       }
     }
 
-    // === 6. Створення ТТН ===
+    // === 6. ТТН ===
     const npRequest = {
       apiKey: process.env.NP_API_KEY,
       modelName: "InternetDocument",
@@ -252,39 +235,28 @@ export async function handleNovaPoshta(req, res) {
 
     // === 7. Етикетка ===
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnData.IntDocNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
-    console.log("📎 Етикетка:", labelUrl);
-
     const pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer" });
     const pdfPath = path.join(LABELS_DIR, `label-${ttnData.IntDocNumber}.pdf`);
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
-    // === 8. Друк через PrintNode ===
+    // === 8. PrintNode ===
     if (process.env.PRINTNODE_API_KEY && process.env.PRINTNODE_PRINTER_ID) {
-      try {
-        console.log("🖨️ Відправляю PDF через PrintNode...");
-        const pdfBuffer = fs.readFileSync(pdfPath);
-        const pdfBase64 = pdfBuffer.toString("base64");
-
-        await axios.post(
-          "https://api.printnode.com/printjobs",
-          {
-            printerId: parseInt(process.env.PRINTNODE_PRINTER_ID),
-            title: `Nova Poshta ${ttnData.IntDocNumber}`,
-            contentType: "pdf_base64",
-            content: pdfBase64,
-            source: "Shopify AutoPrint",
-          },
-          { auth: { username: process.env.PRINTNODE_API_KEY, password: "" } }
-        );
-
-        console.log("✅ Етикетка відправлена на друк через PrintNode");
-      } catch (err) {
-        console.error("🚨 Помилка друку через PrintNode:", err.response?.data || err.message);
-      }
+      const pdfBase64 = fs.readFileSync(pdfPath).toString("base64");
+      await axios.post(
+        "https://api.printnode.com/printjobs",
+        {
+          printerId: parseInt(process.env.PRINTNODE_PRINTER_ID),
+          title: `Nova Poshta ${ttnData.IntDocNumber}`,
+          contentType: "pdf_base64",
+          content: pdfBase64,
+          source: "Shopify AutoPrint",
+        },
+        { auth: { username: process.env.PRINTNODE_API_KEY, password: "" } }
+      );
+      console.log("✅ Етикетка відправлена на друк через PrintNode");
     }
 
-    // === Запис у базу надрукованих замовлень ===
     printedOrders[order.name] = Date.now();
     fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
