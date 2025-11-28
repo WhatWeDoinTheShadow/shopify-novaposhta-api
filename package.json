@@ -1,7 +1,7 @@
 {
   "name": "shopify-novaposhta-api",
   "version": "1.0.0",
-  "description": "Shopify → Nova Poshta API integration for auto-generating TTN and label (100x100mm)",
+  "description": "Shopify → Nova Poshta + Monobank integration: авто-ТТН, етикетка, payment link",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -9,16 +9,15 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
-    "express": "^4.21.1",
     "axios": "^1.7.2",
-    "pdf-lib": "^1.17.1",
-    "bwip-js": "^3.3.1",
-    "dotenv": "^16.4.5",
-    "fontkit": "^2.0.2",
-    "node-fetch": "^3.3.2"
+    "express": "^4.21.1",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
   },
   "engines": {
-    "node": ">=18.x"
+    "node": ">=18.0.0"
   },
   "license": "MIT"
 }
