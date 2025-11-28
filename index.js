@@ -6,71 +6,70 @@ import { handleNovaPoshta } from "./np-handler.js";
 
 dotenv.config();
 
-// ========================== INIT SERVER ==========================
 const app = express();
 app.use(express.json());
 
-// ========================== CONFIG ==========================
+// ========================== LABELS FOLDER ==========================
 const LABELS_DIR = path.resolve("./labels");
 if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
-// 🔹 Роздаємо PDF через /labels
+// Роздаємо PDF з етикетками
 app.use("/labels", express.static("labels"));
 
-// 🧠 Error handling
-process.on("unhandledRejection", (reason) =>
-  console.error("⚠️ Unhandled Rejection:", reason)
-);
-process.on("uncaughtException", (err) =>
-  console.error("🔥 Uncaught Exception:", err)
-);
+// ========================== DEBUG ROOT ==========================
+app.get("/", (req, res) => {
+  res.send("✅ Shopify → Nova Poshta API running");
+});
 
-// ========================== ROUTES ==========================
-
-// 🔹 Кореневий маршрут
-app.get("/", (req, res) =>
-  res.send("✅ Shopify → Nova Poshta автоматична етикетка працює 🚀")
-);
-
-// 🔹 Fallback для тестів у браузері (GET)
-app.get("/api/np-handler", (req, res) => {
+// ========================== GET TEST ROUTE ==========================
+app.get("/api/nova-poshta", (req, res) => {
   res.status(200).send(`
-    <h2>🚚 Shopify → Нова Пошта API</h2>
-    <p>Цей маршрут очікує <strong>POST</strong> запит із JSON-даними Shopify.</p>
+    <h2>🚚 Shopify → Nova Poshta API</h2>
+    <p>Цей маршрут приймає POST із JSON замовлення Shopify.</p>
     <pre>{
   "name": "#1002",
   "total_price": "450",
   "shipping_address": {
     "city": "Київ",
-    "address1": "Відділення №1",
-    "name": "Буздиган Лариса Василівна",
-    "phone": "+380673334455"
+    "address1": "Відділення 1",
+    "name": "Ivan Petrov",
+    "phone": "+380671234567"
   },
-  "line_items": [{ "name": "Моносережка ОПОРА", "quantity": 1 }]
+  "line_items": [{ "name": "Картина", "price": "450", "quantity": 1 }]
 }</pre>
   `);
 });
 
-// 🔹 Основний POST маршрут (Shopify webhook)
-app.post("/api/np-handler", async (req, res) => {
+// ========================== MAIN POST ROUTE ==========================
+
+app.post("/api/nova-poshta", async (req, res) => {
   try {
+    console.log("📥 POST /api/nova-poshta отримано замовлення");
+
     const result = await handleNovaPoshta(req, res);
 
-    // Якщо функція повернула результат — формуємо URL
-    if (result && result.ttn && !res.headersSent) {
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-      const labelUrl = `${baseUrl}/labels/label-${result.ttn}.pdf`;
+    // Якщо handleNovaPoshta сам вже надіслав відповідь → не дублюємо
+    if (res.headersSent) return;
 
-      res.json({
+    // Якщо handleNovaPoshta повернув дані
+    if (result && result.ttn) {
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+
+      return res.json({
         message: "✅ ТТН створено і етикетка згенерована",
         ttn: result.ttn,
-        ref: result.ref,
-        label_path: result.label_path,
-        label_url: labelUrl,
+        label_url: `${baseUrl}/labels/label-${result.ttn}.pdf`,
+        payment_link: result.payment_link || "—",
+        mono_invoice_id: result.mono_invoice_id || "—",
       });
     }
+
+    return res.status(500).json({
+      error: "❌ handleNovaPoshta не повернув результат",
+    });
+
   } catch (err) {
-    console.error("🚨 Помилка у головному маршруті:", err.message);
+    console.error("🚨 Помилка у маршруті /api/nova-poshta:", err);
     if (!res.headersSent)
       res.status(500).json({ error: err.message });
   }
@@ -80,5 +79,7 @@ app.post("/api/np-handler", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌐 Labels available at http://localhost:${PORT}/labels/<filename>.pdf`);
+  console.log(
+    `📦 Test GET: http://localhost:${PORT}/api/nova-poshta`
+  );
 });
