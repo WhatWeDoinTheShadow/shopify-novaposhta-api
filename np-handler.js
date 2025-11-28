@@ -2,6 +2,24 @@ import axios from "axios";
 import fs from "fs";
 import path from "path";
 
+const MONO_DB = path.resolve("./mono_invoices.json");
+if (!fs.existsSync(MONO_DB)) fs.writeFileSync(MONO_DB, "{}");
+let monoInvoices = JSON.parse(fs.readFileSync(MONO_DB, "utf8"));
+
+function saveMonoInvoice(invoiceId, order, paymentUrl) {
+  monoInvoices[invoiceId] = {
+    invoiceId,
+    orderId: order.id,
+    orderName: order.name,
+    total_price: order.total_price,
+    paymentUrl,
+    status: "created",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(MONO_DB, JSON.stringify(monoInvoices, null, 2));
+}
+
 const LABELS_DIR = path.resolve("./labels");
 if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
