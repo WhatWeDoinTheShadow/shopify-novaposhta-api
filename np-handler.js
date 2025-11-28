@@ -10,6 +10,213 @@ if (!fs.existsSync(PRINTED_DB)) fs.writeFileSync(PRINTED_DB, "{}");
 
 let printedOrders = JSON.parse(fs.readFileSync(PRINTED_DB, "utf8"));
 
+/**
+ * Великий словник найчастіших імен/прізвищ латиницею → українською
+ * Можна доповнювати при потребі.
+ */
+const nameMap = {
+  // Чоловічі
+  taras: "Тарас",
+  ivan: "Іван",
+  petro: "Петро",
+  peter: "Пітер",
+  oleksii: "Олексій",
+  oleksiy: "Олексій",
+  alexey: "Олексій",
+  alexei: "Олексій",
+  alex: "Олекс",
+  oleksandr: "Олександр",
+  alexander: "Олександр",
+  andrii: "Андрій",
+  andriy: "Андрій",
+  andrew: "Ендрю",
+  mykola: "Микола",
+  nikolai: "Миколай",
+  nicholas: "Ніколас",
+  dmytro: "Дмитро",
+  dmitro: "Дмитро",
+  dmitry: "Дмитро",
+  denys: "Денис",
+  denis: "Денис",
+  yurii: "Юрій",
+  yuriy: "Юрій",
+  yuri: "Юрій",
+  serhii: "Сергій",
+  serhiy: "Сергій",
+  sergey: "Сергій",
+  sergei: "Сергій",
+  oleksandr: "Олександр",
+  oleg: "Олег",
+  roman: "Роман",
+  ruslan: "Руслан",
+  vitalii: "Віталій",
+  vitaliy: "Віталій",
+  vladimir: "Володимир",
+  volodymyr: "Володимир",
+  vladyslav: "Владислав",
+  vladislav: "Владислав",
+  bogdan: "Богдан",
+  bohdan: "Богдан",
+  yevhen: "Євген",
+  evgen: "Євген",
+  maxim: "Максим",
+  maksym: "Максим",
+  artyom: "Артем",
+  artem: "Артем",
+  arthur: "Артур",
+  artur: "Артур",
+  anatolii: "Анатолій",
+  anatoliy: "Анатолій",
+  pavlo: "Павло",
+  pavel: "Павло",
+  stepan: "Степан",
+  stanislav: "Станіслав",
+  stas: "Стас",
+  leonid: "Леонід",
+  lev: "Лев",
+  levko: "Левко",
+  yegor: "Єгор",
+  ihor: "Ігор",
+  igor: "Ігор",
+  oleksii: "Олексій",
+  yakiv: "Яків",
+  yakov: "Яків",
+  mark: "Марк",
+  maks: "Макс",
+  viktor: "Віктор",
+  victor: "Віктор",
+  anton: "Антон",
+  bogdan: "Богдан",
+  vlad: "Влад",
+
+  // Жіночі
+  olga: "Ольга",
+  olha: "Ольга",
+  olena: "Олена",
+  elena: "Олена",
+  lena: "Лєна",
+  anna: "Анна",
+  anya: "Аня",
+  ania: "Аня",
+  hannah: "Ганна",
+  marina: "Марина",
+  maryna: "Марина",
+  mary: "Мері",
+  mariia: "Марія",
+  maria: "Марія",
+  marija: "Марія",
+  viktoria: "Вікторія",
+  victoria: "Вікторія",
+  sofia: "Софія",
+  sophia: "Софія",
+  sofiia: "Софія",
+  natalia: "Наталія",
+  nataliia: "Наталія",
+  natalya: "Наталя",
+  yulia: "Юлія",
+  julia: "Юлія",
+  yuliia: "Юлія",
+  julija: "Юлія",
+  iryna: "Ірина",
+  irina: "Ірина",
+  oksana: "Оксана",
+  tetiana: "Тетяна",
+  tatiana: "Тетяна",
+  tetyana: "Тетяна",
+  larysa: "Лариса",
+  larisa: "Лариса",
+  halyna: "Галина",
+  galina: "Галина",
+  yolanta: "Йоланта",
+  alina: "Аліна",
+  alla: "Алла",
+  lilia: "Лілія",
+  liliia: "Лілія",
+  lilya: "Ліля",
+  nina: "Ніна",
+  zina: "Зіна",
+  jana: "Яна",
+  yana: "Яна",
+  yanna: "Яна",
+  bohdana: "Богдана",
+  oksana: "Оксана",
+  sveta: "Свєта",
+  svetlana: "Світлана",
+
+  // Прізвища (приклади)
+  shevchenko: "Шевченко",
+  bulba: "Бульба",
+  petrov: "Петров",
+  ivanov: "Іванов",
+  melnyk: "Мельник",
+  melnik: "Мельник",
+  kovalenko: "Коваленко",
+  bondar: "Бондар",
+  tkachenko: "Ткаченко",
+  voronov: "Воронов",
+  romanov: "Романов",
+};
+
+/**
+ * Проста перевірка: є латинка?
+ */
+const isLatin = (str) => /[A-Za-z]/.test(str);
+
+/**
+ * Ніжна "транслітерація" латинки в кирилицю, якщо немає в словнику
+ * (не ідеально, але Новій Пошті так точно краще, ніж латиниця).
+ */
+function translitToUa(raw) {
+  if (!raw) return "";
+
+  const word = raw.toLowerCase();
+
+  if (nameMap[word]) return nameMap[word];
+
+  let s = word;
+  // спочатку диграфи (щоб не зламати ch, sh, ya, yo тощо)
+  s = s.replace(/sch/g, "щ");
+  s = s.replace(/shch/g, "щ");
+  s = s.replace(/ch/g, "ч");
+  s = s.replace(/sh/g, "ш");
+  s = s.replace(/ya/g, "я");
+  s = s.replace(/yu/g, "ю");
+  s = s.replace(/yo/g, "йо");
+  s = s.replace(/ye/g, "є");
+  s = s.replace(/yi/g, "ї");
+
+  // далі одинарні
+  s = s.replace(/a/g, "а");
+  s = s.replace(/b/g, "б");
+  s = s.replace(/v/g, "в");
+  s = s.replace(/h/g, "г");
+  s = s.replace(/g/g, "ґ");
+  s = s.replace(/d/g, "д");
+  s = s.replace(/e/g, "е");
+  s = s.replace(/z/g, "з");
+  s = s.replace(/y/g, "и");
+  s = s.replace(/i/g, "і");
+  s = s.replace(/j/g, "й");
+  s = s.replace(/k/g, "к");
+  s = s.replace(/l/g, "л");
+  s = s.replace(/m/g, "м");
+  s = s.replace(/n/g, "н");
+  s = s.replace(/o/g, "о");
+  s = s.replace(/p/g, "п");
+  s = s.replace(/r/g, "р");
+  s = s.replace(/s/g, "с");
+  s = s.replace(/t/g, "т");
+  s = s.replace(/u/g, "у");
+  s = s.replace(/f/g, "ф");
+  s = s.replace(/c/g, "к");
+  s = s.replace(/x/g, "кс");
+  s = s.replace(/w/g, "в");
+  s = s.replace(/q/g, "к");
+
+  // повертаємо з великої першої
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
 export async function handleNovaPoshta(req, res) {
   const order = req.body;
   console.log("📦 Нове замовлення з Shopify:", order.name);
@@ -79,7 +286,6 @@ export async function handleNovaPoshta(req, res) {
     // === 2. WarehouseRef (Ref або номер відділення) ===
     let warehouseRef = null;
 
-    // якщо Shopify передав щось типу "59267" — пробуємо як Ref
     if (/^\d{5,}$/.test(warehouseName.trim())) {
       console.log("📦 Виявлено можливий Ref відділення:", warehouseName);
       const refRes = await axios.post(
@@ -97,7 +303,6 @@ export async function handleNovaPoshta(req, res) {
       }
     }
 
-    // якщо по Ref не знайшли — шукаємо як "Відділення №N"
     if (!warehouseRef) {
       let cleanWarehouseName = warehouseName
         .replace(/нова\s?пошта/gi, "")
@@ -125,18 +330,27 @@ export async function handleNovaPoshta(req, res) {
       throw new Error(`Не знайдено відділення: ${warehouseName}`);
     console.log("🏤 Використовуємо WarehouseRef:", warehouseRef);
 
-    // === 3. Отримувач ===
+    // === 3. Отримувач (з автоперекладом латиниці) ===
     let cleanName = recipientName
       ?.replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'\s]/g, "")
       ?.trim();
     if (!cleanName || cleanName.length < 2) cleanName = "Тест Отримувач";
+
     let [first, last] = cleanName.split(" ");
+
     if (!last) {
-      last = first || "Отримувач";
-      first = "Тест";
+      last = "Shopify";
     }
-    first = first.charAt(0).toUpperCase() + first.slice(1).toLowerCase();
-    last = last.charAt(0).toUpperCase() + last.slice(1).toLowerCase();
+
+    // якщо ім'я/прізвище латиницею — спершу пробуємо словник, потім трансліт
+    if (isLatin(first)) first = translitToUa(first);
+    if (isLatin(last)) last = translitToUa(last);
+
+    // якщо все ще латиниця (дуже дивний кейс) — жорсткий fallback
+    if (isLatin(first)) first = "Клієнт";
+    if (isLatin(last)) last = "Shopify";
+
+    console.log(`👤 Отримувач (UA): ${first} ${last}`);
 
     const recipientRes = await axios.post(
       "https://api.novaposhta.ua/v2.0/json/",
@@ -259,7 +473,7 @@ export async function handleNovaPoshta(req, res) {
       }
     }
 
-    // === 6. ТТН (з Seats, щоб не було OptionsSeat is empty) ===
+    // === 6. ТТН (з Seats) ===
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
     const afterPaymentAmount = isCOD ? order.total_price : "0";
 
