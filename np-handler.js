@@ -1,6 +1,11 @@
 import axios from "axios";
 import fs from "fs";
 import path from "path";
+import { Parser } from "json2csv"; // ← для CSV
+
+// =======================
+// Monobank local "DB"
+// =======================
 
 const MONO_DB = path.resolve("./mono_invoices.json");
 if (!fs.existsSync(MONO_DB)) fs.writeFileSync(MONO_DB, "{}");
@@ -20,6 +25,10 @@ function saveMonoInvoice(invoiceId, order, paymentUrl) {
   fs.writeFileSync(MONO_DB, JSON.stringify(monoInvoices, null, 2));
 }
 
+// =======================
+// Labels + printed orders
+// =======================
+
 const LABELS_DIR = path.resolve("./labels");
 if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
@@ -27,6 +36,10 @@ const PRINTED_DB = path.resolve("./printed_orders.json");
 if (!fs.existsSync(PRINTED_DB)) fs.writeFileSync(PRINTED_DB, "{}");
 
 let printedOrders = JSON.parse(fs.readFileSync(PRINTED_DB, "utf8"));
+
+// =======================
+// Мапінг імен
+// =======================
 
 /**
  * Великий словник найчастіших імен/прізвищ латиницею → українською
@@ -59,11 +72,6 @@ const nameMap = {
   yurii: "Юрій",
   yuriy: "Юрій",
   yuri: "Юрій",
-  serhii: "Сергій",
-  serhiy: "Сергій",
-  sergey: "Сергій",
-  sergei: "Сергій",
-  oleksandr: "Олександр",
   oleg: "Олег",
   roman: "Роман",
   ruslan: "Руслан",
@@ -96,7 +104,6 @@ const nameMap = {
   yegor: "Єгор",
   ihor: "Ігор",
   igor: "Ігор",
-  oleksii: "Олексій",
   yakiv: "Яків",
   yakov: "Яків",
   mark: "Марк",
@@ -104,7 +111,6 @@ const nameMap = {
   viktor: "Віктор",
   victor: "Віктор",
   anton: "Антон",
-  bogdan: "Богдан",
   vlad: "Влад",
 
   // Жіночі
@@ -157,7 +163,6 @@ const nameMap = {
   yana: "Яна",
   yanna: "Яна",
   bohdana: "Богдана",
-  oksana: "Оксана",
   sveta: "Свєта",
   svetlana: "Світлана",
 
@@ -234,6 +239,10 @@ function translitToUa(raw) {
   // повертаємо з великої першої
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+// =======================
+// Nova Poshta handler
+// =======================
 
 export async function handleNovaPoshta(req, res) {
   const order = req.body;
@@ -594,5 +603,159 @@ export async function handleNovaPoshta(req, res) {
   } catch (err) {
     console.error("🚨 Помилка:", err.message);
     res.status(500).json({ error: err.message });
+  }
+}
+
+// =======================
+// АВТОМАТИЗАЦІЯ ЗАЛИШКІВ СКЛАДУ
+// =======================
+
+const SHOPIFY_STORE = process.env.SHOPIFY_STORE;          // "my-shop.myshopify.com"
+const SHOPIFY_TOKEN = process.env.SHOPIFY_TOKEN;          // Admin API Access Token
+const INVENTORY_THRESHOLD = Number(process.env.INVENTORY_THRESHOLD || 2);
+const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;        // WhatsApp Cloud API token
+const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID;  // phone_number_id
+const WHATSAPP_TO = process.env.WHATSAPP_TO;              // номер/ID одержувача
+const PUBLIC_URL = process.env.PUBLIC_URL;                // базовий URL сервісу на Render
+
+async function fetchAllProducts() {
+  if (!SHOPIFY_STORE || !SHOPIFY_TOKEN) {
+    throw new Error("SHOPIFY_STORE або SHOPIFY_TOKEN не задані");
+  }
+
+  let products = [];
+  let pageInfo = null;
+
+  while (true) {
+    const url = `https://${SHOPIFY_STORE}/admin/api/2024-10/products.json`;
+    const params = { limit: 250 };
+    if (pageInfo) params.page_info = pageInfo;
+
+    const res = await axios.get(url, {
+      headers: {
+        "X-Shopify-Access-Token": SHOPIFY_TOKEN,
+      },
+      params,
+    });
+
+    products = products.concat(res.data.products || []);
+
+    const linkHeader = res.headers["link"];
+    if (!linkHeader || !linkHeader.includes('rel="next"')) break;
+
+    const match = linkHeader.match(/<[^>]*page_info=([^&>]*)[^>]*>; rel="next"/);
+    if (!match) break;
+    pageInfo = match[1];
+  }
+
+  return products;
+}
+
+function getLowStockVariants(products) {
+  const result = [];
+
+  for (const p of products) {
+    for (const v of p.variants || []) {
+      const qty = v.inventory_quantity;
+      if (typeof qty === "number" && qty < INVENTORY_THRESHOLD) {
+        result.push({
+          product_handle: p.handle,
+          product_title: p.title,
+          variant_title: v.title,
+          sku: v.sku,
+          inventory_quantity: qty,
+          admin_link: `https://${SHOPIFY_STORE}/admin/products/${p.id}`,
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+function buildCsv(rows) {
+  const fields = [
+    "product_handle",
+    "product_title",
+    "variant_title",
+    "sku",
+    "inventory_quantity",
+    "admin_link",
+  ];
+  const parser = new Parser({ fields });
+  return parser.parse(rows);
+}
+
+async function generateLowStockCsv() {
+  const products = await fetchAllProducts();
+  const lowStock = getLowStockVariants(products);
+  const csv = buildCsv(lowStock);
+  return { csv, count: lowStock.length };
+}
+
+async function sendWhatsappMessage(text) {
+  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID || !WHATSAPP_TO) {
+    console.warn("⚠️ WHATSAPP_* env не задані, повідомлення не буде відправлене");
+    return;
+  }
+
+  await axios.post(
+    `https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_ID}/messages`,
+    {
+      messaging_product: "whatsapp",
+      to: WHATSAPP_TO,
+      type: "text",
+      text: { body: text },
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+}
+
+// GET /inventory/low.csv
+export async function inventoryCsvHandler(req, res) {
+  try {
+    const { csv } = await generateLowStockCsv();
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      'attachment; filename="low_stock_inventory.csv"'
+    );
+    res.send(csv);
+  } catch (err) {
+    console.error("Inventory CSV error:", err?.response?.data || err);
+    res.status(500).send("Помилка формування CSV по залишках");
+  }
+}
+
+// POST /inventory/notify
+export async function inventoryNotifyHandler(req, res) {
+  try {
+    const { count } = await generateLowStockCsv();
+
+    const base =
+      PUBLIC_URL?.replace(/\/$/, "") ||
+      `${req.protocol}://${req.get("host")}`;
+    const csvUrl = `${base}/inventory/low.csv`;
+
+    if (count === 0) {
+      await sendWhatsappMessage(
+        `Щотижневий звіт по залишках: всі товари мають запас не менше ${INVENTORY_THRESHOLD} шт ✅`
+      );
+    } else {
+      await sendWhatsappMessage(
+        `Увага: знайдено ${count} позицій з залишком менше ${INVENTORY_THRESHOLD} шт.\nCSV зі списком: ${csvUrl}`
+      );
+    }
+
+    res.json({ ok: true, count, csvUrl });
+  } catch (err) {
+    console.error("Inventory notify error:", err?.response?.data || err);
+    res.status(500).json({ ok: false, error: "Помилка відправки повідомлення" });
   }
 }
