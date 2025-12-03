@@ -1,187 +1,100 @@
 import express from "express";
 import dotenv from "dotenv";
-import fs from "fs";
 import path from "path";
+import fs from "fs";
+import { fileURLToPath } from "url";
 import {
   handleNovaPoshta,
   inventoryCsvHandler,
   inventoryNotifyHandler,
-} from "./np-handler.js"; // ⬅️ додали інвентар-хендлери
+} from "./np-handler.js";
 
 dotenv.config();
 
+// ========================== PATH HELPERS ==========================
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// ========================== INIT SERVER ==========================
 const app = express();
 app.use(express.json());
 
 // ========================== LABELS FOLDER ==========================
-const LABELS_DIR = path.resolve("./labels");
+const LABELS_DIR = path.resolve(__dirname, "./labels");
 if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
-// Роздаємо PDF з етикетками
-app.use("/labels", express.static("labels"));
+// роздаємо PDF з етикетками
+app.use("/labels", express.static(LABELS_DIR));
 
-// ========================== DEBUG ROOT ==========================
+// ========================== HEALTHCHECK ==========================
 app.get("/", (req, res) => {
   res.send(`
-    ✅ Shopify → Nova Poshta API running<br/>
-    📦 Nova Poshta endpoint: <code>POST /api/nova-poshta</code><br/>
-    📊 Inventory CSV: <code>GET /inventory/low.csv</code><br/>
-    📲 Inventory WhatsApp notify: <code>POST /inventory/notify</code>
+    <h2>🚚 Shopify → Nova Poshta + Monobank API</h2>
+    <p>Сервіс працює. Основні маршрути:</p>
+    <ul>
+      <li>GET <code>/api/nova-poshta</code> — тестова сторінка</li>
+      <li>POST <code>/api/nova-poshta</code> — вебхук з Shopify (order/create)</li>
+      <li>GET <code>/inventory/low.csv</code> — CSV зі залишками нижче порогу</li>
+      <li>POST <code>/inventory/notify</code> — тригер WhatsApp-нотифікації</li>
+    </ul>
   `);
 });
 
-// ========================== GET TEST ROUTE ==========================
+// ========================== TEST PAGE (GET) ==========================
 app.get("/api/nova-poshta", (req, res) => {
   res.status(200).send(`
-    <h2>🚚 Shopify → Nova Poshta API</h2>
-    <p>Цей маршрут приймає POST із JSON замовлення Shopify.</p>
+    <h2>🚚 Shopify → Нова Пошта API</h2>
+    <p>Цей маршрут очікує <strong>POST</strong> запит із JSON-даними Shopify (order/create).</p>
+    <p>Приклад payload:</p>
     <pre>{
+  "id": 1234567890,
   "name": "#1002",
   "total_price": "450",
   "shipping_address": {
     "city": "Київ",
-    "address1": "Відділення 1",
-    "name": "Ivan Petrov",
-    "phone": "+380671234567"
+    "address1": "Відділення №1",
+    "name": "Буздиган Лариса Василівна",
+    "phone": "+380673334455"
   },
-  "line_items": [{ "name": "Картина", "price": "450", "quantity": 1 }]
+  "line_items": [{ "name": "Моносережка ОПОРА", "quantity": 1, "price": "450" }],
+  "payment_gateway_names": ["Cash on Delivery"]
 }</pre>
   `);
 });
 
-// ========================== MAIN POST ROUTE (Nova Poshta) ==========================
-
+// ========================== MAIN WEBHOOK (POST) ==========================
+// Shopify Webhook: Orders → order/create → POST https://.../api/nova-poshta
 app.post("/api/nova-poshta", async (req, res) => {
   try {
-    console.log("📥 POST /api/nova-poshta отримано замовлення");
-
-    const result = await handleNovaPoshta(req, res);
-
-    // Якщо handleNovaPoshta сам вже надіслав відповідь → не дублюємо
-    if (res.headersSent) return;
-
-    // Якщо handleNovaPoshta повернув дані
-    if (result && result.ttn) {
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-
-      return res.json({
-        message: "✅ ТТН створено і етикетка згенерована",
-        ttn: result.ttn,
-        label_url: `${baseUrl}/labels/label-${result.ttn}.pdf`,
-        payment_link: result.payment_link || "—",
-        mono_invoice_id: result.mono_invoice_id || "—",
-      });
-    }
-
-    return res.status(500).json({
-      error: "❌ handleNovaPoshta не повернув результат",
-    });
-
+    await handleNovaPoshta(req, res);
   } catch (err) {
-    console.error("🚨 Помилка у маршруті /api/nova-poshta:", err);
-    if (!res.headersSent)
-      res.status(500).json({ error: err.message });
+    console.error("🚨 Помилка у головному маршруті /api/nova-poshta:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Internal server error" });
+    }
   }
 });
 
 // ========================== INVENTORY ROUTES ==========================
 
-// CSV зі списком товарів з залишком < INVENTORY_THRESHOLD
-// GET /inventory/low.csv
+// CSV зі списком low-stock
 app.get("/inventory/low.csv", inventoryCsvHandler);
 
-// Тригер, який шле повідомлення у WhatsApp з лінком на CSV
-// POST /inventory/notify
+// Тригер WhatsApp-нотифікації + повертає info по CSV
 app.post("/inventory/notify", inventoryNotifyHandler);
 
-// ========================== SERVER ==========================
+// ========================== ERROR HANDLERS ==========================
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠️ Unhandled Rejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("🔥 Uncaught Exception:", err);
+});
+
+// ========================== SERVER START ==========================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📦 Test GET: http://localhost:${PORT}/api/nova-poshta`);
-  console.log(`📊 Inventory CSV: http://localhost:${PORT}/inventory/low.csv`);
-});import express from "express";
-import dotenv from "dotenv";
-import fs from "fs";
-import path from "path";
-import { handleNovaPoshta } from "./np-handler.js";
-
-dotenv.config();
-
-const app = express();
-app.use(express.json());
-
-// ========================== LABELS FOLDER ==========================
-const LABELS_DIR = path.resolve("./labels");
-if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
-
-// Роздаємо PDF з етикетками
-app.use("/labels", express.static("labels"));
-
-// ========================== DEBUG ROOT ==========================
-app.get("/", (req, res) => {
-  res.send("✅ Shopify → Nova Poshta API running");
-});
-
-// ========================== GET TEST ROUTE ==========================
-app.get("/api/nova-poshta", (req, res) => {
-  res.status(200).send(`
-    <h2>🚚 Shopify → Nova Poshta API</h2>
-    <p>Цей маршрут приймає POST із JSON замовлення Shopify.</p>
-    <pre>{
-  "name": "#1002",
-  "total_price": "450",
-  "shipping_address": {
-    "city": "Київ",
-    "address1": "Відділення 1",
-    "name": "Ivan Petrov",
-    "phone": "+380671234567"
-  },
-  "line_items": [{ "name": "Картина", "price": "450", "quantity": 1 }]
-}</pre>
-  `);
-});
-
-// ========================== MAIN POST ROUTE ==========================
-
-app.post("/api/nova-poshta", async (req, res) => {
-  try {
-    console.log("📥 POST /api/nova-poshta отримано замовлення");
-
-    const result = await handleNovaPoshta(req, res);
-
-    // Якщо handleNovaPoshta сам вже надіслав відповідь → не дублюємо
-    if (res.headersSent) return;
-
-    // Якщо handleNovaPoshta повернув дані
-    if (result && result.ttn) {
-      const baseUrl = `${req.protocol}://${req.get("host")}`;
-
-      return res.json({
-        message: "✅ ТТН створено і етикетка згенерована",
-        ttn: result.ttn,
-        label_url: `${baseUrl}/labels/label-${result.ttn}.pdf`,
-        payment_link: result.payment_link || "—",
-        mono_invoice_id: result.mono_invoice_id || "—",
-      });
-    }
-
-    return res.status(500).json({
-      error: "❌ handleNovaPoshta не повернув результат",
-    });
-
-  } catch (err) {
-    console.error("🚨 Помилка у маршруті /api/nova-poshta:", err);
-    if (!res.headersSent)
-      res.status(500).json({ error: err.message });
-  }
-});
-
-// ========================== SERVER ==========================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(
-    `📦 Test GET: http://localhost:${PORT}/api/nova-poshta`
-  );
+  console.log(`📦 Test GET (Nova Poshta): http://localhost:${PORT}/api/nova-poshta`);
+  console.log(`📊 Inventory CSV:         http://localhost:${PORT}/inventory/low.csv`);
 });
