@@ -1,7 +1,6 @@
 import axios from "axios";
 import fs from "fs";
 import path from "path";
-import { Parser } from "json2csv"; // для CSV по залишках
 
 // =======================
 // ENV для Shopify / Mono
@@ -548,6 +547,20 @@ export async function handleNovaPoshta(req, res) {
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
     const afterPaymentAmount = isCOD ? order.total_price : "0";
 
+    // Опис відправлення з обмеженням довжини і чисткою символів
+    const rawItemsDescription =
+      order.line_items?.map((i) => i.name).join(", ") ||
+      `Shopify order ${order.name}`;
+
+    let description = rawItemsDescription
+      .replace(/[^\p{L}\p{N}\s.,-]/gu, "") // прибираємо емодзі та дивні символи
+      .trim();
+
+    const MAX_DESC_LENGTH = 200; // безпечний ліміт для НП
+    if (description.length > MAX_DESC_LENGTH) {
+      description = description.slice(0, MAX_DESC_LENGTH - 3).trim() + "...";
+    }
+
     const npRequest = {
       apiKey: process.env.NP_API_KEY,
       modelName: "InternetDocument",
@@ -571,9 +584,7 @@ export async function handleNovaPoshta(req, res) {
         ],
 
         Cost: order.total_price || "0",
-        Description:
-          order.line_items?.map((i) => i.name).join(", ") ||
-          `Shopify order ${order.name}`,
+        Description: description,
         CitySender: SENDER_CITY_REF,
         SenderAddress: SENDER_ADDRESS_REF,
         ContactSender: CONTACT_SENDER_REF,
@@ -648,161 +659,5 @@ export async function handleNovaPoshta(req, res) {
   } catch (err) {
     console.error("🚨 Помилка:", err.message);
     res.status(500).json({ error: err.message });
-  }
-}
-
-// =======================
-// АВТОМАТИЗАЦІЯ ЗАЛИШКІВ СКЛАДУ
-// =======================
-
-const INVENTORY_THRESHOLD = Number(process.env.INVENTORY_THRESHOLD || 2);
-const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
-const WHATSAPP_PHONE_ID = process.env.WHATSAPP_PHONE_ID;
-const WHATSAPP_TO = process.env.WHATSAPP_TO;
-const PUBLIC_URL = process.env.PUBLIC_URL;
-
-async function fetchAllProducts() {
-  if (!SHOPIFY_STORE || !SHOPIFY_ADMIN_TOKEN) {
-    throw new Error("SHOPIFY_STORE або SHOPIFY_ADMIN_API_KEY не задані");
-  }
-
-  let products = [];
-  let pageInfo = null;
-
-  while (true) {
-    const url = `https://${SHOPIFY_STORE}/admin/api/2024-10/products.json`;
-    const params = { limit: 250 };
-    if (pageInfo) params.page_info = pageInfo;
-
-    const res = await axios.get(url, {
-      headers: {
-        "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN,
-      },
-      params,
-    });
-
-    products = products.concat(res.data.products || []);
-
-    const linkHeader = res.headers["link"];
-    if (!linkHeader || !linkHeader.includes('rel="next"')) break;
-
-    const match = linkHeader.match(
-      /<[^>]*page_info=([^&>]*)[^>]*>; rel="next"/
-    );
-    if (!match) break;
-    pageInfo = match[1];
-  }
-
-  return products;
-}
-
-function getLowStockVariants(products) {
-  const result = [];
-
-  for (const p of products) {
-    for (const v of p.variants || []) {
-      const qty = v.inventory_quantity;
-      if (typeof qty === "number" && qty < INVENTORY_THRESHOLD) {
-        result.push({
-          product_handle: p.handle,
-          product_title: p.title,
-          variant_title: v.title,
-          sku: v.sku,
-          inventory_quantity: qty,
-          admin_link: `https://${SHOPIFY_STORE}/admin/products/${p.id}`,
-        });
-      }
-    }
-  }
-
-  return result;
-}
-
-function buildCsv(rows) {
-  const fields = [
-    "product_handle",
-    "product_title",
-    "variant_title",
-    "sku",
-    "inventory_quantity",
-    "admin_link",
-  ];
-  const parser = new Parser({ fields });
-  return parser.parse(rows);
-}
-
-async function generateLowStockCsv() {
-  const products = await fetchAllProducts();
-  const lowStock = getLowStockVariants(products);
-  const csv = buildCsv(lowStock);
-  return { csv, count: lowStock.length };
-}
-
-async function sendWhatsappMessage(text) {
-  if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID || !WHATSAPP_TO) {
-    console.warn(
-      "⚠️ WHATSAPP_* env не задані, повідомлення не буде відправлене"
-    );
-    return;
-  }
-
-  await axios.post(
-    `https://graph.facebook.com/v21.0/${WHATSAPP_PHONE_ID}/messages`,
-    {
-      messaging_product: "whatsapp",
-      to: WHATSAPP_TO,
-      type: "text",
-      text: { body: text },
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${WHATSAPP_TOKEN}`,
-        "Content-Type": "application/json",
-      },
-    }
-  );
-}
-
-export async function inventoryCsvHandler(req, res) {
-  try {
-    const { csv } = await generateLowStockCsv();
-
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      'attachment; filename="low_stock_inventory.csv"'
-    );
-    res.send(csv);
-  } catch (err) {
-    console.error("Inventory CSV error:", err?.response?.data || err);
-    res.status(500).send("Помилка формування CSV по залишках");
-  }
-}
-
-export async function inventoryNotifyHandler(req, res) {
-  try {
-    const { count } = await generateLowStockCsv();
-
-    const base =
-      PUBLIC_URL?.replace(/\/$/, "") ||
-      `${req.protocol}://${req.get("host")}`;
-    const csvUrl = `${base}/inventory/low.csv`;
-
-    if (count === 0) {
-      await sendWhatsappMessage(
-        `Щотижневий звіт по залишках: всі товари мають запас не менше ${INVENTORY_THRESHOLD} шт ✅`
-      );
-    } else {
-      await sendWhatsappMessage(
-        `Увага: знайдено ${count} позицій з залишком менше ${INVENTORY_THRESHOLD} шт.\nCSV зі списком: ${csvUrl}`
-      );
-    }
-
-    res.json({ ok: true, count, csvUrl });
-  } catch (err) {
-    console.error("Inventory notify error:", err?.response?.data || err);
-    res
-      .status(500)
-      .json({ ok: false, error: "Помилка відправки повідомлення" });
   }
 }
