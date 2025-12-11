@@ -45,7 +45,7 @@ if (!fs.existsSync(PRINTED_DB)) fs.writeFileSync(PRINTED_DB, "{}");
 let printedOrders = JSON.parse(fs.readFileSync(PRINTED_DB, "utf8"));
 
 // =======================
-// Мапінг імен
+// Мапінг імен (UA)
 // =======================
 
 const nameMap = {
@@ -192,6 +192,7 @@ function translitToUa(raw) {
   if (nameMap[word]) return nameMap[word];
 
   let s = word;
+  // диграфи
   s = s.replace(/shch/g, "щ");
   s = s.replace(/sch/g, "щ");
   s = s.replace(/ch/g, "ч");
@@ -202,6 +203,7 @@ function translitToUa(raw) {
   s = s.replace(/ye/g, "є");
   s = s.replace(/yi/g, "ї");
 
+  // одинарні
   s = s.replace(/a/g, "а");
   s = s.replace(/b/g, "б");
   s = s.replace(/v/g, "в");
@@ -233,7 +235,7 @@ function translitToUa(raw) {
 }
 
 // =======================
-// Nova Poshta + Mono handler
+// Nova Poshta + Monobank handler
 // =======================
 
 export async function handleNovaPoshta(req, res) {
@@ -261,15 +263,15 @@ export async function handleNovaPoshta(req, res) {
       .json({ error: "❌ NP_API_KEY is missing on server" });
 
   try {
-    // Дані відправника
+    // === Дані відправника ===
     const SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626";
     const SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d";
     const SENDER_REF = "6bcb6d88-16de-11ef-bcd0-48df37b921da";
     const CONTACT_SENDER_REF = "f8caa074-1740-11ef-bcd0-48df37b921da";
     const SENDERS_PHONE = "380932532432";
 
-    // Дані з Shopify
-    const cityName = order.shipping_address?.city || "Київ";
+    // === Дані з Shopify ===
+    const rawCityName = order.shipping_address?.city || "Київ";
     const warehouseName =
       order.shipping_address?.address1 || "Відділення №1";
     const recipientName =
@@ -277,7 +279,7 @@ export async function handleNovaPoshta(req, res) {
     let rawPhone = order.shipping_address?.phone || "";
     const paymentMethod = order.payment_gateway_names?.[0] || "";
 
-    // Телефон
+    // === Форматування телефону ===
     let recipientPhone = rawPhone.replace(/\D/g, "");
     if (recipientPhone.startsWith("0")) recipientPhone = "38" + recipientPhone;
     if (recipientPhone.startsWith("80")) recipientPhone = "3" + recipientPhone;
@@ -292,27 +294,80 @@ export async function handleNovaPoshta(req, res) {
       recipientPhone = "380501112233";
     }
 
-    console.log("🏙️ Місто:", cityName);
+    console.log("🏙️ Місто (сире):", rawCityName);
     console.log("🏤 Відділення (сире):", warehouseName);
     console.log("📞 Телефон:", recipientPhone);
     console.log("💰 Оплата:", paymentMethod);
 
-    // 1. CityRef
-    const cityRes = await axios.post(
+    // === 1. CityRef з фіксом апострофів ===
+    let cityRef = null;
+
+    // Вариант 1: замінити юнікод-апострофи на звичайний '
+    let cityQuery1 = rawCityName.replace(/[ʼ’`]/g, "'").trim();
+    console.log("🏙️ Пошук міста (апостроф → '):", cityQuery1);
+
+    let cityRes = await axios.post(
       "https://api.novaposhta.ua/v2.0/json/",
       {
         apiKey: process.env.NP_API_KEY,
         modelName: "Address",
         calledMethod: "getCities",
-        methodProperties: { FindByString: cityName },
+        methodProperties: { FindByString: cityQuery1 },
       }
     );
-    const cityRef = cityRes.data.data?.[0]?.Ref;
-    if (!cityRef) throw new Error(`Не знайдено місто: ${cityName}`);
+    cityRef = cityRes.data.data?.[0]?.Ref || null;
 
-    // 2. WarehouseRef (Ref або номер)
+    // Вариант 2: якщо не знайшли — прибрати всі апострофи
+    if (!cityRef) {
+      let cityQuery2 = rawCityName
+        .replace(/[ʼ’'`]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      console.log("🏙️ Пошук міста (без апострофів):", cityQuery2);
+
+      cityRes = await axios.post(
+        "https://api.novaposhta.ua/v2.0/json/",
+        {
+          apiKey: process.env.NP_API_KEY,
+          modelName: "Address",
+          calledMethod: "getCities",
+          methodProperties: { FindByString: cityQuery2 },
+        }
+      );
+      cityRef = cityRes.data.data?.[0]?.Ref || null;
+    }
+
+    // Вариант 3: тільки букви + пробіли
+    if (!cityRef) {
+      let cityQuery3 = rawCityName
+        .replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ\s-]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      console.log("🏙️ Пошук міста (тільки букви):", cityQuery3);
+
+      cityRes = await axios.post(
+        "https://api.novaposhta.ua/v2.0/json/",
+        {
+          apiKey: process.env.NP_API_KEY,
+          modelName: "Address",
+          calledMethod: "getCities",
+          methodProperties: { FindByString: cityQuery3 },
+        }
+      );
+      cityRef = cityRes.data.data?.[0]?.Ref || null;
+    }
+
+    if (!cityRef) {
+      console.error("❌ Не знайдено місто навіть після нормалізації:", rawCityName);
+      throw new Error(`Не знайдено місто: ${rawCityName}`);
+    }
+
+    console.log("✅ CityRef:", cityRef);
+
+    // === 2. WarehouseRef (Ref або номер відділення) ===
     let warehouseRef = null;
 
+    // якщо Shopify передав щось типу "59267" — пробуємо як Ref
     if (/^\d{5,}$/.test(warehouseName.trim())) {
       console.log("📦 Виявлено можливий Ref відділення:", warehouseName);
       const refRes = await axios.post(
@@ -330,6 +385,7 @@ export async function handleNovaPoshta(req, res) {
       }
     }
 
+    // якщо по Ref не знайшли — шукаємо як "Відділення №N"
     if (!warehouseRef) {
       let cleanWarehouseName = warehouseName
         .replace(/нова\s?пошта/gi, "")
@@ -357,7 +413,7 @@ export async function handleNovaPoshta(req, res) {
       throw new Error(`Не знайдено відділення: ${warehouseName}`);
     console.log("🏤 Використовуємо WarehouseRef:", warehouseRef);
 
-    // 3. Отримувач з автоперекладом латиниці
+    // === 3. Отримувач (з автоперекладом латиниці) ===
     let cleanName = recipientName
       ?.replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'\s]/g, "")
       ?.trim();
@@ -372,6 +428,7 @@ export async function handleNovaPoshta(req, res) {
     if (isLatin(first)) first = translitToUa(first);
     if (isLatin(last)) last = translitToUa(last);
 
+    // якщо все ще латиниця — абсолютно fallback
     if (isLatin(first)) first = "Клієнт";
     if (isLatin(last)) last = "Shopify";
 
@@ -401,7 +458,7 @@ export async function handleNovaPoshta(req, res) {
       );
     const RECIPIENT_REF = recipientRes.data.data[0].Ref;
 
-    // 4. Контактна особа
+    // === 4. Контактна особа ===
     const contactRes = await axios.post(
       "https://api.novaposhta.ua/v2.0/json/",
       {
@@ -430,7 +487,7 @@ export async function handleNovaPoshta(req, res) {
       CONTACT_RECIPIENT_REF = newContactRes.data.data[0].Ref;
     }
 
-    // 5. Payment link через Monobank
+    // === 5. Payment link через Monobank ===
     let paymentUrl = null;
     let monoInvoiceId = null;
 
@@ -500,7 +557,7 @@ export async function handleNovaPoshta(req, res) {
       }
     }
 
-    // 5b. Записати payment link у метафілд Shopify
+    // === 5b. Записати payment link у метафілд Shopify (Order metafields → Payment link) ===
     if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order.id) {
       try {
         console.log("🧷 Записуємо payment link у метафілд Shopify...");
@@ -541,14 +598,9 @@ export async function handleNovaPoshta(req, res) {
       );
     }
 
-    // 6. ТТН (з Seats) + короткий Description
+    // === 6. ТТН (з Seats) ===
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
     const afterPaymentAmount = isCOD ? order.total_price : "0";
-
-    const rawDescription =
-      order.line_items?.map((i) => i.name).join(", ") ||
-      `Shopify order ${order.name}`;
-    const description = rawDescription.slice(0, 250); // щоб не було "Description too long"
 
     const npRequest = {
       apiKey: process.env.NP_API_KEY,
@@ -573,7 +625,9 @@ export async function handleNovaPoshta(req, res) {
         ],
 
         Cost: order.total_price || "0",
-        Description: description,
+        Description:
+          order.line_items?.map((i) => i.name).join(", ") ||
+          `Shopify order ${order.name}`,
         CitySender: SENDER_CITY_REF,
         SenderAddress: SENDER_ADDRESS_REF,
         ContactSender: CONTACT_SENDER_REF,
@@ -600,7 +654,7 @@ export async function handleNovaPoshta(req, res) {
     const ttnData = ttnRes.data?.[0];
     console.log("✅ ТТН створено:", ttnData.IntDocNumber);
 
-    // 7. Етикетка
+    // === 7. Етикетка ===
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnData.IntDocNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
     const pdfResponse = await axios.get(labelUrl, {
       responseType: "arraybuffer",
@@ -612,7 +666,7 @@ export async function handleNovaPoshta(req, res) {
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
-    // 8. PrintNode
+    // === 8. PrintNode ===
     if (process.env.PRINTNODE_API_KEY && process.env.PRINTNODE_PRINTER_ID) {
       const pdfBase64 = fs.readFileSync(pdfPath).toString("base64");
       await axios.post(
