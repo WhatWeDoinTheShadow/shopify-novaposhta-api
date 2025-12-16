@@ -6,7 +6,7 @@ console.log("🚀 Triggering Render Deploy...");
 
 try {
     const res = await axios.post(DEPLOY_HOOK);
-    if (res.status === 200) {
+    if (res.status >= 200 && res.status < 300) {
         console.log("✅ Deployment triggered successfully!");
         console.log("Check your Render dashboard for progress.");
     } else {

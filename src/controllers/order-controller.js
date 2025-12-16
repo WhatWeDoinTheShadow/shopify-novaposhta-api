@@ -152,9 +152,9 @@ export async function handleNovaPoshta(req, res) {
 
         // Optional verify (won't break if service doesn't have it)
         if (typeof Shopify.getOrderMetafieldValue === "function") {
-            const savedLabel = await Shopify.getOrderMetafieldValue(order.id, "custom", "ttn_label_url");
+            const savedLabel = await Shopify.getOrderMetafieldValue(order.id, "custom", "np_ttn_pdf");
             const savedTtn = await Shopify.getOrderMetafieldValue(order.id, "custom", "ttn_number");
-            console.log("🔎 Shopify saved ttn_label_url:", savedLabel);
+            console.log("🔎 Shopify saved np_ttn_pdf:", savedLabel);
             console.log("🔎 Shopify saved ttn_number:", savedTtn);
         }
 
