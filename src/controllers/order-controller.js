@@ -104,26 +104,13 @@ export async function handleNovaPoshta(req, res) {
             if (paymentUrl) {
                 console.log("✅ Лінк для оплати (Monobank):", paymentUrl);
             } else {
-                console.warn("⚠️ Monobank invoice created but NO pageUrl returned!");
-            }
-
-            if (paymentUrl) {
-                // IMPORTANT: updateMetafields must be GraphQL metafieldsSet (NOT REST order update)
-                await Shopify.updateMetafields(order.id, [
-                    { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
-                ]);
-
-                // Optional verify (won't break if service doesn't have it)
-                if (typeof Shopify.getOrderMetafieldValue === "function") {
-                    const saved = await Shopify.getOrderMetafieldValue(order.id, "custom", "payment_link");
-                    console.log("🔎 Shopify saved payment_link:", saved);
-                }
+                console.warn("⚠️ Інвойс створено, але посилання відсутнє!");
             }
         } else {
-            console.log("💡 COD — payment link не створюємо");
+            console.log("💡 Післяплата — лінк не створюємо");
         }
 
-        // 6) Create TTN (ensure Seats passed/created inside NovaPoshta.createTTN)
+        // 6) Create TTN
         const ttnData = await NovaPoshta.createTTN({
             moneyAmount: order?.total_price || "0",
             description: buildShortDescription(order),
@@ -143,25 +130,30 @@ export async function handleNovaPoshta(req, res) {
         const { pdfPath, publicUrl } = await NovaPoshta.downloadLabel(ttnNumber);
         console.log("💾 PDF збережено:", pdfPath);
 
-        // 8) Save label URL + TTN number to Shopify metafields
-        // publicUrl should be like /labels/label-XXXX.pdf (path) or full url depending on service
+        // 8) Save Metafields (Payment + Label) - BATCHED
         const fullLabelUrl = publicUrl?.startsWith("http")
             ? publicUrl
             : `${baseUrl}${publicUrl || ""}`;
 
-        await Shopify.updateMetafields(order.id, [
-            { namespace: "custom", key: "np_ttn_pdf", type: "url", value: fullLabelUrl },
-            { namespace: "custom", key: "ttn_number", type: "single_line_text_field", value: String(ttnNumber) },
-        ]);
+        const metafieldsToSave = [
+            { namespace: "custom", key: "np_ttn_pdf", type: "url", value: fullLabelUrl }
+        ];
 
-        console.log("🔗 TTN metafields saved in Shopify:", fullLabelUrl);
+        if (paymentUrl) {
+            metafieldsToSave.push(
+                { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl }
+            );
+        }
 
-        // Optional verify (won't break if service doesn't have it)
+        if (metafieldsToSave.length > 0) {
+            await Shopify.updateMetafields(order.id, metafieldsToSave);
+            console.log("🔗 Метафілди збережено:", metafieldsToSave.map(m => m.key).join(", "));
+        }
+
+        // Optional verify
         if (typeof Shopify.getOrderMetafieldValue === "function") {
             const savedLabel = await Shopify.getOrderMetafieldValue(order.id, "custom", "np_ttn_pdf");
-            const savedTtn = await Shopify.getOrderMetafieldValue(order.id, "custom", "ttn_number");
-            console.log("🔎 Shopify saved np_ttn_pdf:", savedLabel);
-            console.log("🔎 Shopify saved ttn_number:", savedTtn);
+            console.log("🔎 Перевірка Shopify np_ttn_pdf:", savedLabel);
         }
 
         // 9) Print
