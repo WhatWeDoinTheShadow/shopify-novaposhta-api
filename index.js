@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-import { handleNovaPoshta } from "./np-handler.js";
+import { handleNovaPoshta } from "./src/controllers/order-controller.js";
 
 dotenv.config();
 
