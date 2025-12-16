@@ -24,6 +24,9 @@ export async function handleNovaPoshta(req, res) {
         });
     }
 
+    // Mark as processed immediately to prevent race conditions from double webhooks
+    markOrderProcessed(orderKey);
+
     if (!config.novaPoshta.apiKey) {
         return res.status(500).json({ error: "❌ NP_API_KEY is missing on server" });
     }
@@ -96,8 +99,7 @@ export async function handleNovaPoshta(req, res) {
         // 9. Print Label
         await printLabel(pdfPath, ttnData.IntDocNumber);
 
-        // 10. Mark Processed
-        markOrderProcessed(orderKey);
+        // 10. Mark Processed - moved to start
 
         return res.json({
             ok: true,
