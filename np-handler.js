@@ -6,9 +6,9 @@ import path from "path";
 // ENV для Shopify / Mono
 // =======================
 
-const SHOPIFY_STORE = process.env.SHOPIFY_STORE;               // woman-jwlry.myshopify.com
+const SHOPIFY_STORE = process.env.SHOPIFY_STORE; // woman-jwlry.myshopify.com
 const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_API_KEY; // Admin API access token
-const BASE_URL = process.env.BASE_URL;                         // https://shopify-novaposhta-api.onrender.com
+const BASE_URL = process.env.BASE_URL; // https://shopify-novaposhta-api.onrender.com
 
 // =======================
 // Monobank local "DB"
@@ -192,7 +192,6 @@ function translitToUa(raw) {
   if (nameMap[word]) return nameMap[word];
 
   let s = word;
-  // диграфи
   s = s.replace(/shch/g, "щ");
   s = s.replace(/sch/g, "щ");
   s = s.replace(/ch/g, "ч");
@@ -203,7 +202,6 @@ function translitToUa(raw) {
   s = s.replace(/ye/g, "є");
   s = s.replace(/yi/g, "ї");
 
-  // одинарні
   s = s.replace(/a/g, "а");
   s = s.replace(/b/g, "б");
   s = s.replace(/v/g, "в");
@@ -235,14 +233,147 @@ function translitToUa(raw) {
 }
 
 // =======================
+// helpers
+// =======================
+
+function normalizePhone(rawPhone) {
+  let recipientPhone = String(rawPhone || "").replace(/\D/g, "");
+  if (recipientPhone.startsWith("0")) recipientPhone = "38" + recipientPhone;
+  if (recipientPhone.startsWith("80")) recipientPhone = "3" + recipientPhone;
+  if (!recipientPhone.startsWith("380"))
+    recipientPhone = "380" + recipientPhone.replace(/^(\+)?(38)?/, "");
+  if (recipientPhone.length > 12) recipientPhone = recipientPhone.slice(0, 12);
+
+  if (!/^380\d{9}$/.test(recipientPhone)) {
+    console.warn(
+      `⚠️ Невірний номер телефону: ${recipientPhone} (${rawPhone}), замінюємо на тестовий`
+    );
+    recipientPhone = "380501112233";
+  }
+
+  return recipientPhone;
+}
+
+function buildShortDescription(order) {
+  // NP часто ріже Description. Безпечний короткий варіант.
+  const base = `Order ${order.name || ""}`.trim();
+  const itemsCount = Array.isArray(order.line_items) ? order.line_items.length : 0;
+  const qtySum = Array.isArray(order.line_items)
+    ? order.line_items.reduce((acc, i) => acc + Number(i.quantity || 0), 0)
+    : 0;
+
+  let desc = base;
+  if (itemsCount > 0) desc += ` | items:${itemsCount}`;
+  if (qtySum > 0) desc += ` | qty:${qtySum}`;
+
+  // запас по довжині
+  return desc.slice(0, 90);
+}
+
+function splitName(raw) {
+  const clean = String(raw || "")
+    .replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!clean) return { first: "Клієнт", last: "Shopify" };
+
+  const parts = clean.split(" ").filter(Boolean);
+  let first = parts[0] || "Клієнт";
+  let last = parts.slice(1).join(" ") || "Shopify";
+
+  // NP може не любити латиницю в PrivatePerson. Робимо м'який fallback:
+  // 1) пробуємо трансліт по словнику/правилам
+  // 2) якщо все ще латиниця — ставимо дефолт
+  if (isLatin(first)) first = translitToUa(first);
+  if (isLatin(last)) last = translitToUa(last);
+
+  if (isLatin(first)) first = "Клієнт";
+  if (isLatin(last)) last = "Shopify";
+
+  // NP також може не любити довгі lastName
+  return {
+    first: String(first).slice(0, 30),
+    last: String(last).slice(0, 30),
+  };
+}
+
+async function findCityRef(rawCityName, apiKey) {
+  const q1 = String(rawCityName || "Київ").replace(/[ʼ’`]/g, "'").trim();
+  const q2 = String(rawCityName || "Київ")
+    .replace(/[ʼ’'`]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const q3 = String(rawCityName || "Київ")
+    .replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const queries = [q1, q2, q3].filter(Boolean);
+
+  for (const q of queries) {
+    console.log("🏙️ Пошук міста:", q);
+    const cityRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+      apiKey,
+      modelName: "Address",
+      calledMethod: "getCities",
+      methodProperties: { FindByString: q },
+    });
+    const ref = cityRes.data?.data?.[0]?.Ref;
+    if (ref) return ref;
+  }
+
+  return null;
+}
+
+async function findWarehouseRef(warehouseName, cityRef, apiKey) {
+  let warehouseRef = null;
+
+  // Якщо це просто цифри — інколи там номер, а не Ref.
+  // Твій старий код пробував як Ref — залишимо, але якщо не знайде, йдемо в пошук по номеру.
+  if (/^\d{5,}$/.test(String(warehouseName || "").trim())) {
+    console.log("📦 Виявлено можливий Ref відділення:", warehouseName);
+    const refRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+      apiKey,
+      modelName: "AddressGeneral",
+      calledMethod: "getWarehouses",
+      methodProperties: { Ref: String(warehouseName).trim() },
+    });
+    warehouseRef = refRes.data?.data?.[0]?.Ref || null;
+    if (warehouseRef) return warehouseRef;
+  }
+
+  // Пошук по номеру відділення
+  const cleanWarehouseName = String(warehouseName || "")
+    .replace(/нова\s?пошта/gi, "")
+    .replace(/nova\s?poshta/gi, "")
+    .replace(/відділення/gi, "")
+    .replace(/№/g, "")
+    .replace(/#/g, " ")
+    .trim();
+
+  const onlyNumber = cleanWarehouseName.match(/\d+/)?.[0] || "1";
+  console.log(`🏤 Очищене відділення: ${onlyNumber}`);
+
+  const whRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+    apiKey,
+    modelName: "AddressGeneral",
+    calledMethod: "getWarehouses",
+    methodProperties: { CityRef: cityRef, FindByString: onlyNumber },
+  });
+
+  return whRes.data?.data?.[0]?.Ref || null;
+}
+
+// =======================
 // Nova Poshta + Monobank handler
 // =======================
 
 export async function handleNovaPoshta(req, res) {
   const order = req.body;
-  const orderKey = String(order.id || order.name || "unknown");
+  const orderKey = String(order?.id || order?.name || "unknown");
 
-  console.log("📦 Нове замовлення з Shopify:", orderKey, order.name);
+  console.log("📦 Нове замовлення з Shopify:", orderKey, order?.name);
 
   // антидубль по order.id (10 хв)
   const now = Date.now();
@@ -257,10 +388,9 @@ export async function handleNovaPoshta(req, res) {
     });
   }
 
-  if (!process.env.NP_API_KEY)
-    return res
-      .status(500)
-      .json({ error: "❌ NP_API_KEY is missing on server" });
+  if (!process.env.NP_API_KEY) {
+    return res.status(500).json({ error: "❌ NP_API_KEY is missing on server" });
+  }
 
   try {
     // === Дані відправника ===
@@ -271,220 +401,82 @@ export async function handleNovaPoshta(req, res) {
     const SENDERS_PHONE = "380932532432";
 
     // === Дані з Shopify ===
-    const rawCityName = order.shipping_address?.city || "Київ";
-    const warehouseName =
-      order.shipping_address?.address1 || "Відділення №1";
-    const recipientName =
-      order.shipping_address?.name || "Тестовий Отримувач";
-    let rawPhone = order.shipping_address?.phone || "";
-    const paymentMethod = order.payment_gateway_names?.[0] || "";
+    const rawCityName = order?.shipping_address?.city || "Київ";
+    const warehouseName = order?.shipping_address?.address1 || "Відділення №1";
+    const recipientName = order?.shipping_address?.name || "Тестовий Отримувач";
+    const rawPhone = order?.shipping_address?.phone || "";
+    const paymentMethod = order?.payment_gateway_names?.[0] || "";
 
-    // === Форматування телефону ===
-    let recipientPhone = rawPhone.replace(/\D/g, "");
-    if (recipientPhone.startsWith("0")) recipientPhone = "38" + recipientPhone;
-    if (recipientPhone.startsWith("80")) recipientPhone = "3" + recipientPhone;
-    if (!recipientPhone.startsWith("380"))
-      recipientPhone = "380" + recipientPhone.replace(/^(\+)?(38)?/, "");
-    if (recipientPhone.length > 12)
-      recipientPhone = recipientPhone.slice(0, 12);
-    if (!/^380\d{9}$/.test(recipientPhone)) {
-      console.warn(
-        `⚠️ Невірний номер телефону: ${recipientPhone} (${rawPhone}), замінюємо на тестовий`
-      );
-      recipientPhone = "380501112233";
-    }
+    const recipientPhone = normalizePhone(rawPhone);
 
     console.log("🏙️ Місто (сире):", rawCityName);
     console.log("🏤 Відділення (сире):", warehouseName);
     console.log("📞 Телефон:", recipientPhone);
     console.log("💰 Оплата:", paymentMethod);
 
-    // === 1. CityRef з фіксом апострофів ===
-    let cityRef = null;
-
-    // Вариант 1: замінити юнікод-апострофи на звичайний '
-    let cityQuery1 = rawCityName.replace(/[ʼ’`]/g, "'").trim();
-    console.log("🏙️ Пошук міста (апостроф → '):", cityQuery1);
-
-    let cityRes = await axios.post(
-      "https://api.novaposhta.ua/v2.0/json/",
-      {
-        apiKey: process.env.NP_API_KEY,
-        modelName: "Address",
-        calledMethod: "getCities",
-        methodProperties: { FindByString: cityQuery1 },
-      }
-    );
-    cityRef = cityRes.data.data?.[0]?.Ref || null;
-
-    // Вариант 2: якщо не знайшли — прибрати всі апострофи
-    if (!cityRef) {
-      let cityQuery2 = rawCityName
-        .replace(/[ʼ’'`]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      console.log("🏙️ Пошук міста (без апострофів):", cityQuery2);
-
-      cityRes = await axios.post(
-        "https://api.novaposhta.ua/v2.0/json/",
-        {
-          apiKey: process.env.NP_API_KEY,
-          modelName: "Address",
-          calledMethod: "getCities",
-          methodProperties: { FindByString: cityQuery2 },
-        }
-      );
-      cityRef = cityRes.data.data?.[0]?.Ref || null;
-    }
-
-    // Вариант 3: тільки букви + пробіли
-    if (!cityRef) {
-      let cityQuery3 = rawCityName
-        .replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ\s-]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      console.log("🏙️ Пошук міста (тільки букви):", cityQuery3);
-
-      cityRes = await axios.post(
-        "https://api.novaposhta.ua/v2.0/json/",
-        {
-          apiKey: process.env.NP_API_KEY,
-          modelName: "Address",
-          calledMethod: "getCities",
-          methodProperties: { FindByString: cityQuery3 },
-        }
-      );
-      cityRef = cityRes.data.data?.[0]?.Ref || null;
-    }
-
-    if (!cityRef) {
-      console.error("❌ Не знайдено місто навіть після нормалізації:", rawCityName);
-      throw new Error(`Не знайдено місто: ${rawCityName}`);
-    }
-
+    // === 1. CityRef ===
+    const cityRef = await findCityRef(rawCityName, process.env.NP_API_KEY);
+    if (!cityRef) throw new Error(`Не знайдено місто: ${rawCityName}`);
     console.log("✅ CityRef:", cityRef);
 
-    // === 2. WarehouseRef (Ref або номер відділення) ===
-    let warehouseRef = null;
-
-    // якщо Shopify передав щось типу "59267" — пробуємо як Ref
-    if (/^\d{5,}$/.test(warehouseName.trim())) {
-      console.log("📦 Виявлено можливий Ref відділення:", warehouseName);
-      const refRes = await axios.post(
-        "https://api.novaposhta.ua/v2.0/json/",
-        {
-          apiKey: process.env.NP_API_KEY,
-          modelName: "AddressGeneral",
-          calledMethod: "getWarehouses",
-          methodProperties: { Ref: warehouseName.trim() },
-        }
-      );
-      warehouseRef = refRes.data.data?.[0]?.Ref || null;
-      if (warehouseRef) {
-        console.log("✅ Відділення знайдене по Ref:", warehouseRef);
-      }
-    }
-
-    // якщо по Ref не знайшли — шукаємо як "Відділення №N"
-    if (!warehouseRef) {
-      let cleanWarehouseName = warehouseName
-        .replace(/нова\s?пошта/gi, "")
-        .replace(/nova\s?poshta/gi, "")
-        .replace(/відділення/gi, "")
-        .replace(/№/g, "")
-        .trim();
-
-      const onlyNumber = cleanWarehouseName.match(/\d+/)?.[0] || "1";
-      console.log(`🏤 Очищене відділення: ${onlyNumber}`);
-
-      const whRes = await axios.post(
-        "https://api.novaposhta.ua/v2.0/json/",
-        {
-          apiKey: process.env.NP_API_KEY,
-          modelName: "AddressGeneral",
-          calledMethod: "getWarehouses",
-          methodProperties: { CityRef: cityRef, FindByString: onlyNumber },
-        }
-      );
-      warehouseRef = whRes.data.data?.[0]?.Ref || null;
-    }
-
-    if (!warehouseRef)
-      throw new Error(`Не знайдено відділення: ${warehouseName}`);
+    // === 2. WarehouseRef ===
+    const warehouseRef = await findWarehouseRef(
+      warehouseName,
+      cityRef,
+      process.env.NP_API_KEY
+    );
+    if (!warehouseRef) throw new Error(`Не знайдено відділення: ${warehouseName}`);
     console.log("🏤 Використовуємо WarehouseRef:", warehouseRef);
 
-    // === 3. Отримувач (з автоперекладом латиниці) ===
-    let cleanName = recipientName
-      ?.replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'\s]/g, "")
-      ?.trim();
-    if (!cleanName || cleanName.length < 2) cleanName = "Тест Отримувач";
-
-    let [first, last] = cleanName.split(" ");
-
-    if (!last) {
-      last = "Shopify";
-    }
-
-    if (isLatin(first)) first = translitToUa(first);
-    if (isLatin(last)) last = translitToUa(last);
-
-    // якщо все ще латиниця — абсолютно fallback
-    if (isLatin(first)) first = "Клієнт";
-    if (isLatin(last)) last = "Shopify";
-
+    // === 3. Отримувач ===
+    const { first, last } = splitName(recipientName);
     console.log(`👤 Отримувач (UA): ${first} ${last}`);
 
-    const recipientRes = await axios.post(
-      "https://api.novaposhta.ua/v2.0/json/",
-      {
+    const recipientRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+      apiKey: process.env.NP_API_KEY,
+      modelName: "Counterparty",
+      calledMethod: "save",
+      methodProperties: {
+        CounterpartyProperty: "Recipient",
+        CounterpartyType: "PrivatePerson",
+        FirstName: first,
+        LastName: last,
+        Phone: recipientPhone,
+        CityRef: cityRef,
+      },
+    });
+
+    if (!recipientRes.data?.success) {
+      throw new Error(
+        `Не вдалося створити отримувача: ${(recipientRes.data?.errors || []).join(", ")}`
+      );
+    }
+    const RECIPIENT_REF = recipientRes.data.data?.[0]?.Ref;
+
+    // === 4. Контактна особа ===
+    const contactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
+      apiKey: process.env.NP_API_KEY,
+      modelName: "ContactPerson",
+      calledMethod: "getContactPersons",
+      methodProperties: { CounterpartyRef: RECIPIENT_REF },
+    });
+
+    let CONTACT_RECIPIENT_REF = contactRes.data?.data?.[0]?.Ref;
+
+    if (!CONTACT_RECIPIENT_REF) {
+      const newContactRes = await axios.post("https://api.novaposhta.ua/v2.0/json/", {
         apiKey: process.env.NP_API_KEY,
-        modelName: "Counterparty",
+        modelName: "ContactPerson",
         calledMethod: "save",
         methodProperties: {
-          CounterpartyProperty: "Recipient",
-          CounterpartyType: "PrivatePerson",
+          CounterpartyRef: RECIPIENT_REF,
           FirstName: first,
           LastName: last,
           Phone: recipientPhone,
-          CityRef: cityRef,
         },
-      }
-    );
-    if (!recipientRes.data.success)
-      throw new Error(
-        `Не вдалося створити отримувача: ${recipientRes.data.errors.join(
-          ", "
-        )}`
-      );
-    const RECIPIENT_REF = recipientRes.data.data[0].Ref;
+      });
 
-    // === 4. Контактна особа ===
-    const contactRes = await axios.post(
-      "https://api.novaposhta.ua/v2.0/json/",
-      {
-        apiKey: process.env.NP_API_KEY,
-        modelName: "ContactPerson",
-        calledMethod: "getContactPersons",
-        methodProperties: { CounterpartyRef: RECIPIENT_REF },
-      }
-    );
-    let CONTACT_RECIPIENT_REF = contactRes.data.data?.[0]?.Ref;
-    if (!CONTACT_RECIPIENT_REF) {
-      const newContactRes = await axios.post(
-        "https://api.novaposhta.ua/v2.0/json/",
-        {
-          apiKey: process.env.NP_API_KEY,
-          modelName: "ContactPerson",
-          calledMethod: "save",
-          methodProperties: {
-            CounterpartyRef: RECIPIENT_REF,
-            FirstName: first,
-            LastName: last,
-            Phone: recipientPhone,
-          },
-        }
-      );
-      CONTACT_RECIPIENT_REF = newContactRes.data.data[0].Ref;
+      CONTACT_RECIPIENT_REF = newContactRes.data?.data?.[0]?.Ref;
     }
 
     // === 5. Payment link через Monobank ===
@@ -492,37 +484,32 @@ export async function handleNovaPoshta(req, res) {
     let monoInvoiceId = null;
 
     if (!process.env.MONO_MERCHANT_TOKEN) {
-      console.warn(
-        "⚠️ MONO_MERCHANT_TOKEN відсутній, пропускаємо створення інвойсу monobank"
-      );
+      console.warn("⚠️ MONO_MERCHANT_TOKEN відсутній, пропускаємо створення інвойсу monobank");
     } else {
       try {
         console.log("💳 Генеруємо payment link через Monobank...");
 
-        const total = parseFloat(order.total_price || "0");
+        const total = parseFloat(order?.total_price || "0");
         const amountInCents = Math.round(total * 100);
 
-        const basketOrder = (order.line_items || []).map((item) => {
-          const lineTotal = parseFloat(item.price || "0") * item.quantity;
+        const basketOrder = (order?.line_items || []).map((item) => {
+          const lineTotal = parseFloat(item.price || "0") * Number(item.quantity || 0);
           return {
-            name: item.name || "Товар",
-            qty: item.quantity,
+            name: String(item.name || "Товар").slice(0, 128),
+            qty: Number(item.quantity || 0),
             sum: Math.round(lineTotal * 100),
-            code: String(
-              item.product_id || item.sku || item.variant_id || ""
-            ),
+            code: String(item.product_id || item.sku || item.variant_id || "").slice(0, 64),
           };
         });
 
-        const baseUrl =
-          BASE_URL || `${req.protocol}://${req.get("host")}`;
+        const baseUrl = BASE_URL || `${req.protocol}://${req.get("host")}`;
 
         const monoBody = {
           amount: amountInCents,
           ccy: 980,
           merchantPaymInfo: {
             reference: String(order.id || order.name),
-            destination: `Оплата замовлення ${order.name}`,
+            destination: `Оплата замовлення ${order.name}`.slice(0, 140),
             basketOrder,
           },
           redirectUrl: `${baseUrl}/mono/payment/redirect`,
@@ -542,23 +529,22 @@ export async function handleNovaPoshta(req, res) {
           }
         );
 
-        monoInvoiceId = monoRes.data.invoiceId;
-        paymentUrl = monoRes.data.pageUrl;
+        monoInvoiceId = monoRes.data?.invoiceId;
+        paymentUrl = monoRes.data?.pageUrl;
 
         console.log("✅ Monobank invoice:", monoInvoiceId);
         console.log("✅ Лінк для оплати (Monobank):", paymentUrl);
 
-        saveMonoInvoice(monoInvoiceId, order, paymentUrl);
+        if (monoInvoiceId && paymentUrl) {
+          saveMonoInvoice(monoInvoiceId, order, paymentUrl);
+        }
       } catch (err) {
-        console.error(
-          "🚨 Помилка при створенні payment link через Monobank:",
-          err.response?.data || err.message
-        );
+        console.error("🚨 Помилка при створенні payment link через Monobank:", err.response?.data || err.message);
       }
     }
 
-    // === 5b. Записати payment link у метафілд Shopify (Order metafields → Payment link) ===
-    if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order.id) {
+    // === 5b. Записати payment link у метафілд Shopify ===
+    if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
       try {
         console.log("🧷 Записуємо payment link у метафілд Shopify...");
 
@@ -587,18 +573,13 @@ export async function handleNovaPoshta(req, res) {
 
         console.log("🔗 Payment link успішно записаний у метафілд Shopify");
       } catch (err) {
-        console.error(
-          "⚠️ Не вдалось записати payment link в Shopify:",
-          err.response?.data || err.message
-        );
+        console.error("⚠️ Не вдалось записати payment link в Shopify:", err.response?.data || err.message);
       }
     } else {
-      console.warn(
-        "⚠️ Пропускаємо запис метафілда Shopify: немає paymentUrl або SHOPIFY_STORE / SHOPIFY_ADMIN_API_KEY / order.id"
-      );
+      console.warn("⚠️ Пропускаємо запис метафілда Shopify: немає paymentUrl або SHOPIFY_STORE / SHOPIFY_ADMIN_API_KEY / order.id");
     }
 
-    // === 6. ТТН (з Seats) ===
+    // === 6. ТТН (ВАЖЛИВО: без Seats і без VolumeGeneral) ===
     const isCOD = /cash|cod|налож/i.test(paymentMethod);
     const afterPaymentAmount = isCOD ? order.total_price : "0";
 
@@ -610,69 +591,54 @@ export async function handleNovaPoshta(req, res) {
         PayerType: "Recipient",
         PaymentMethod: "Cash",
         CargoType: "Parcel",
-        Weight: "0.3",
-        VolumeGeneral: "0.001",
         ServiceType: "WarehouseWarehouse",
 
         SeatsAmount: "1",
-        Seats: [
-          {
-            VolumetricWidth: "10",
-            VolumetricHeight: "10",
-            VolumetricLength: "10",
-            Weight: "0.3",
-          },
-        ],
+        Weight: "0.3",
 
         Cost: order.total_price || "0",
-        Description:
-          order.line_items?.map((i) => i.name).join(", ") ||
-          `Shopify order ${order.name}`,
+        Description: buildShortDescription(order),
+
         CitySender: SENDER_CITY_REF,
         SenderAddress: SENDER_ADDRESS_REF,
         ContactSender: CONTACT_SENDER_REF,
         Sender: SENDER_REF,
         SendersPhone: SENDERS_PHONE,
+
         CityRecipient: cityRef,
         RecipientAddress: warehouseRef,
         Recipient: RECIPIENT_REF,
         ContactRecipient: CONTACT_RECIPIENT_REF,
         RecipientsPhone: recipientPhone,
+
         AfterpaymentOnGoodsCost: afterPaymentAmount,
       },
     };
 
-    const { data: ttnRes } = await axios.post(
-      "https://api.novaposhta.ua/v2.0/json/",
-      npRequest
-    );
-    if (!ttnRes.success)
-      throw new Error(
-        `Не вдалося створити ТТН: ${ttnRes.errors?.join(", ")}`
-      );
+    const { data: ttnRes } = await axios.post("https://api.novaposhta.ua/v2.0/json/", npRequest);
+
+    if (!ttnRes?.success) {
+      throw new Error(`Не вдалося створити ТТН: ${(ttnRes?.errors || []).join(", ")}`);
+    }
 
     const ttnData = ttnRes.data?.[0];
-    console.log("✅ ТТН створено:", ttnData.IntDocNumber);
+    console.log("✅ ТТН створено:", ttnData?.IntDocNumber);
 
-    // === 7. Етикетка ===
+    // === 7. Етикетка (PDF) ===
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnData.IntDocNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
-    const pdfResponse = await axios.get(labelUrl, {
-      responseType: "arraybuffer",
-    });
-    const pdfPath = path.join(
-      LABELS_DIR,
-      `label-${ttnData.IntDocNumber}.pdf`
-    );
+    const pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer" });
+
+    const pdfPath = path.join(LABELS_DIR, `label-${ttnData.IntDocNumber}.pdf`);
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
-    // === 8. PrintNode ===
+    // === 8. PrintNode (опціонально) ===
     if (process.env.PRINTNODE_API_KEY && process.env.PRINTNODE_PRINTER_ID) {
       const pdfBase64 = fs.readFileSync(pdfPath).toString("base64");
       await axios.post(
         "https://api.printnode.com/printjobs",
         {
-          printerId: parseInt(process.env.PRINTNODE_PRINTER_ID),
+          printerId: parseInt(process.env.PRINTNODE_PRINTER_ID, 10),
           title: `Nova Poshta ${ttnData.IntDocNumber}`,
           contentType: "pdf_base64",
           content: pdfBase64,
@@ -683,17 +649,16 @@ export async function handleNovaPoshta(req, res) {
       console.log("✅ Етикетка відправлена на друк через PrintNode");
     }
 
-    // позначаємо це замовлення як вже оброблене
+    // позначаємо замовлення як оброблене
     printedOrders[orderKey] = Date.now();
     fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
-    const publicUrl = `${req.protocol}://${req.get(
-      "host"
-    )}/labels/label-${ttnData.IntDocNumber}.pdf`;
+    const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnData.IntDocNumber}.pdf`;
 
     return res.json({
-      message:
-        "✅ ТТН створено, етикетка надрукована. Лінк на оплату — Monobank invoice",
+      ok: true,
+      message: "✅ ТТН створено. Етикетка збережена. Лінк на оплату — Monobank invoice (якщо створився).",
+      order_id: orderKey,
       ttn: ttnData.IntDocNumber,
       label_url: publicUrl,
       payment_link: paymentUrl || "—",
@@ -701,6 +666,6 @@ export async function handleNovaPoshta(req, res) {
     });
   } catch (err) {
     console.error("🚨 Помилка:", err.message);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 }
