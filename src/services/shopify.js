@@ -1,26 +1,19 @@
 import axios from "axios";
 import { config } from "../config.js";
 
-export async function updatePaymentMetafield(orderId, paymentUrl) {
-    if (!paymentUrl || !config.shopify.store || !config.shopify.adminToken || !orderId) {
+export async function updateMetafields(orderId, metafields) {
+    if (!config.shopify.store || !config.shopify.adminToken || !orderId || !metafields || !metafields.length) {
         return;
     }
 
     try {
-        console.log("🧷 Записуємо payment link у метафілд Shopify...");
+        console.log("🧷 Оновлюємо метафілди Shopify:", metafields.map(m => m.key).join(", "));
         await axios.put(
             `https://${config.shopify.store}/admin/api/2024-10/orders/${orderId}.json`,
             {
                 order: {
                     id: orderId,
-                    metafields: [
-                        {
-                            namespace: "custom",
-                            key: "payment_link",
-                            type: "url",
-                            value: paymentUrl,
-                        },
-                    ],
+                    metafields: metafields,
                 },
             },
             {
@@ -30,8 +23,8 @@ export async function updatePaymentMetafield(orderId, paymentUrl) {
                 },
             }
         );
-        console.log("🔗 Payment link успішно записаний у метафілд Shopify");
+        console.log("🔗 Метафілди успішно оновлено");
     } catch (err) {
-        console.error("⚠️ Не вдалось записати payment link в Shopify:", err.response?.data || err.message);
+        console.error("⚠️ Не вдалось оновити метафілди в Shopify:", err.response?.data || err.message);
     }
 }

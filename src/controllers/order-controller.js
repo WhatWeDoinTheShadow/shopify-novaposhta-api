@@ -74,8 +74,15 @@ export async function handleNovaPoshta(req, res) {
             console.log("✅ Лінк для оплати (Monobank):", paymentUrl);
         }
 
-        // 6. Update Shopify Metafield
-        await Shopify.updatePaymentMetafield(order.id, paymentUrl);
+        // 6. Update Shopify Metafield (Payment Link)
+        if (paymentUrl) {
+            await Shopify.updateMetafields(order.id, [{
+                namespace: "custom",
+                key: "payment_link",
+                type: "url",
+                value: paymentUrl
+            }]);
+        }
 
         // 7. Create TTN
         const isCOD = /cash|cod|налож/i.test(paymentMethod);
@@ -95,6 +102,16 @@ export async function handleNovaPoshta(req, res) {
         // 8. Download Label
         const { pdfPath, publicUrl } = await NovaPoshta.downloadLabel(ttnData.IntDocNumber);
         console.log("💾 PDF збережено:", pdfPath);
+
+        // 8a. Update Shopify Metafield (Label URL)
+        const fullLabelUrl = `${baseUrl}${publicUrl}`;
+        await Shopify.updateMetafields(order.id, [{
+            namespace: "custom",
+            key: "ttn_label_url",
+            type: "url",
+            value: fullLabelUrl
+        }]);
+        console.log("🔗 Label URL recorded in Shopify:", fullLabelUrl);
 
         // 9. Print Label
         await printLabel(pdfPath, ttnData.IntDocNumber);
