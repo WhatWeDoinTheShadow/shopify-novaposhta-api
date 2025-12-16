@@ -93,13 +93,19 @@ export async function handleNovaPoshta(req, res) {
         let paymentUrl = null;
 
         const isCOD = /cash|cod|налож/i.test(paymentMethod);
+        console.log(`🧐 Payment Debug: method='${paymentMethod}', isCOD=${isCOD}`);
 
         if (!isCOD) {
+            console.log("🚀 Creating Monobank invoice...");
             monoResult = await Monobank.createInvoice(order, baseUrl);
             paymentUrl = monoResult?.pageUrl || null;
 
-            if (monoResult?.invoiceId) console.log("✅ Monobank invoice:", monoResult.invoiceId);
-            if (paymentUrl) console.log("✅ Лінк для оплати (Monobank):", paymentUrl);
+            if (monoResult?.invoiceId) console.log("✅ Monobank invoice created:", monoResult.invoiceId);
+            if (paymentUrl) {
+                console.log("✅ Лінк для оплати (Monobank):", paymentUrl);
+            } else {
+                console.warn("⚠️ Monobank invoice created but NO pageUrl returned!");
+            }
 
             if (paymentUrl) {
                 // IMPORTANT: updateMetafields must be GraphQL metafieldsSet (NOT REST order update)

@@ -61,6 +61,8 @@ export async function createInvoice(order, baseUrl) {
             webHookUrl: `${baseUrl}/api/mono/webhook`,
         };
 
+        console.log("📡 Sending to Monobank:", JSON.stringify(monoBody, null, 2));
+
         const monoRes = await axios.post(
             "https://api.monobank.ua/api/merchant/invoice/create",
             monoBody,
