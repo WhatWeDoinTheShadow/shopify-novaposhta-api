@@ -92,7 +92,7 @@ export async function handleNovaPoshta(req, res) {
         let monoResult = null;
         let paymentUrl = null;
 
-        const isCOD = /cash|cod|налож/i.test(paymentMethod);
+        const isCOD = /cash|cod|налож|money_order/i.test(paymentMethod);
         console.log(`🧐 Payment Debug: method='${paymentMethod}', isCOD=${isCOD}`);
 
         if (!isCOD) {
@@ -136,12 +136,12 @@ export async function handleNovaPoshta(req, res) {
             : `${baseUrl}${publicUrl || ""}`;
 
         const metafieldsToSave = [
-            { namespace: "custom", key: "np_ttn_pdf", type: "url", value: fullLabelUrl }
+            { namespace: "custom", key: "np_ttn_pdf", type: "single_line_text_field", value: fullLabelUrl }
         ];
 
         if (paymentUrl) {
             metafieldsToSave.push(
-                { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl }
+                { namespace: "custom", key: "payment_link", type: "single_line_text_field", value: paymentUrl }
             );
         }
 
