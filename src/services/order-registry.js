@@ -22,3 +22,13 @@ export function markOrderProcessed(orderKey) {
         fs.writeFileSync(PRINTED_DB, JSON.stringify(data, null, 2));
     } catch (e) { }
 }
+
+export function unmarkOrderProcessed(orderKey) {
+    try {
+        const data = JSON.parse(fs.readFileSync(PRINTED_DB, "utf8"));
+        if (data[orderKey]) {
+            delete data[orderKey];
+            fs.writeFileSync(PRINTED_DB, JSON.stringify(data, null, 2));
+        }
+    } catch (e) { }
+}

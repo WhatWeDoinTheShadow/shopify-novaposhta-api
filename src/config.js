@@ -23,3 +23,6 @@ export const config = {
     },
     baseUrl: process.env.BASE_URL,
 };
+
+export const SHOPIFY_STORE = config.shopify.store;
+export const SHOPIFY_ADMIN_TOKEN = config.shopify.adminToken;

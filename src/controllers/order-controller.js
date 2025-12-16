@@ -1,5 +1,9 @@
 import { config } from "../config.js";
-import { isOrderProcessed, markOrderProcessed } from "../services/order-registry.js";
+import {
+    isOrderProcessed,
+    markOrderProcessed,
+    unmarkOrderProcessed,
+} from "../services/order-registry.js";
 import { normalizePhone, buildShortDescription } from "../utils/formatters.js";
 import { splitName } from "../utils/transliteration.js";
 import * as NovaPoshta from "../services/novaposhta.js";
@@ -13,7 +17,7 @@ export async function handleNovaPoshta(req, res) {
 
     console.log("📦 Нове замовлення з Shopify:", orderKey, order?.name);
 
-    // 1. Check duplicate
+    // 1) Anti-duplicate (registry)
     if (isOrderProcessed(orderKey)) {
         console.log("⚠️ Дублікат webhook — пропускаємо:", orderKey);
         return res.json({
@@ -24,15 +28,31 @@ export async function handleNovaPoshta(req, res) {
         });
     }
 
-    // Mark as processed immediately to prevent race conditions from double webhooks
+    // Mark early to avoid race double-webhooks
     markOrderProcessed(orderKey);
 
-    if (!config.novaPoshta.apiKey) {
-        return res.status(500).json({ error: "❌ NP_API_KEY is missing on server" });
-    }
+    const rollbackProcessed = () => {
+        try {
+            if (typeof unmarkOrderProcessed === "function") unmarkOrderProcessed(orderKey);
+        } catch (e) { }
+    };
+
+    const fail = (status, message, extra = undefined) => {
+        rollbackProcessed();
+        if (extra) console.log("❌ fail extra:", extra);
+        return res.status(status).json({ ok: false, error: message });
+    };
 
     try {
-        // 2. Extract Data
+        if (!config?.novaPoshta?.apiKey) {
+            return fail(500, "❌ NP_API_KEY is missing on server");
+        }
+
+        if (!order?.id) {
+            return fail(400, "❌ order.id is missing (Shopify webhook payload)");
+        }
+
+        // 2) Extract & normalize input
         const rawCityName = order?.shipping_address?.city || "Київ";
         const warehouseName = order?.shipping_address?.address1 || "Відділення №1";
         const recipientName = order?.shipping_address?.name || "Тестовий Отримувач";
@@ -45,18 +65,22 @@ export async function handleNovaPoshta(req, res) {
         console.log("🏙️ Місто (сире):", rawCityName);
         console.log("🏤 Відділення (сире):", warehouseName);
         console.log("📞 Телефон:", recipientPhone);
-        console.log("👤 Отримувач (UA):", first, last);
+        console.log("👤 Отримувач:", first, last);
+        console.log("💰 Оплата:", paymentMethod);
 
-        // 3. Find City & Warehouse
+        // Base URL for redirects + public links
+        const baseUrl = config.baseUrl || `${req.protocol}://${req.get("host")}`;
+
+        // 3) City & Warehouse
         const cityRef = await NovaPoshta.findCityRef(rawCityName);
         if (!cityRef) throw new Error(`Не знайдено місто: ${rawCityName}`);
         console.log("✅ CityRef:", cityRef);
 
         const warehouseRef = await NovaPoshta.findWarehouseRef(warehouseName, cityRef);
         if (!warehouseRef) throw new Error(`Не знайдено відділення: ${warehouseName}`);
-        console.log("🏤 Використовуємо WarehouseRef:", warehouseRef);
+        console.log("🏤 WarehouseRef:", warehouseRef);
 
-        // 4. Create/Find Recipient & Contact
+        // 4) Recipient & Contact (NP)
         const { recipientRef, contactRef } = await NovaPoshta.createRecipientAndContact(
             first,
             last,
@@ -64,72 +88,97 @@ export async function handleNovaPoshta(req, res) {
             cityRef
         );
 
-        // 5. Monobank Invoice (Payment Link)
-        const baseUrl = config.baseUrl || `${req.protocol}://${req.get("host")}`;
-        const monoResult = await Monobank.createInvoice(order, baseUrl);
-        const paymentUrl = monoResult?.pageUrl;
+        // 5) Monobank invoice (ONLY if not COD)
+        let monoResult = null;
+        let paymentUrl = null;
 
-        if (monoResult) {
-            console.log("✅ Monobank invoice:", monoResult.invoiceId);
-            console.log("✅ Лінк для оплати (Monobank):", paymentUrl);
-        }
-
-        // 6. Update Shopify Metafield (Payment Link)
-        if (paymentUrl) {
-            await Shopify.updateMetafields(order.id, [{
-                namespace: "custom",
-                key: "payment_link",
-                type: "url",
-                value: paymentUrl
-            }]);
-        }
-
-        // 7. Create TTN
         const isCOD = /cash|cod|налож/i.test(paymentMethod);
+
+        if (!isCOD) {
+            monoResult = await Monobank.createInvoice(order, baseUrl);
+            paymentUrl = monoResult?.pageUrl || null;
+
+            if (monoResult?.invoiceId) console.log("✅ Monobank invoice:", monoResult.invoiceId);
+            if (paymentUrl) console.log("✅ Лінк для оплати (Monobank):", paymentUrl);
+
+            if (paymentUrl) {
+                // IMPORTANT: updateMetafields must be GraphQL metafieldsSet (NOT REST order update)
+                await Shopify.updateMetafields(order.id, [
+                    { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
+                ]);
+
+                // Optional verify (won't break if service doesn't have it)
+                if (typeof Shopify.getOrderMetafieldValue === "function") {
+                    const saved = await Shopify.getOrderMetafieldValue(order.id, "custom", "payment_link");
+                    console.log("🔎 Shopify saved payment_link:", saved);
+                }
+            }
+        } else {
+            console.log("💡 COD — payment link не створюємо");
+        }
+
+        // 6) Create TTN (ensure Seats passed/created inside NovaPoshta.createTTN)
         const ttnData = await NovaPoshta.createTTN({
-            moneyAmount: order.total_price || "0",
+            moneyAmount: order?.total_price || "0",
             description: buildShortDescription(order),
             cityRef,
             warehouseRef,
             recipientRef,
             contactRef,
             phone: recipientPhone,
-            isCOD
+            isCOD,
         });
 
-        console.log("✅ ТТН створено:", ttnData?.IntDocNumber);
+        const ttnNumber = ttnData?.IntDocNumber;
+        if (!ttnNumber) throw new Error("Не вдалося отримати номер ТТН");
+        console.log("✅ ТТН створено:", ttnNumber);
 
-        // 8. Download Label
-        const { pdfPath, publicUrl } = await NovaPoshta.downloadLabel(ttnData.IntDocNumber);
+        // 7) Download label PDF
+        const { pdfPath, publicUrl } = await NovaPoshta.downloadLabel(ttnNumber);
         console.log("💾 PDF збережено:", pdfPath);
 
-        // 8a. Update Shopify Metafield (Label URL)
-        const fullLabelUrl = `${baseUrl}${publicUrl}`;
-        await Shopify.updateMetafields(order.id, [{
-            namespace: "custom",
-            key: "ttn_label_url",
-            type: "url",
-            value: fullLabelUrl
-        }]);
-        console.log("🔗 Label URL recorded in Shopify:", fullLabelUrl);
+        // 8) Save label URL + TTN number to Shopify metafields
+        // publicUrl should be like /labels/label-XXXX.pdf (path) or full url depending on service
+        const fullLabelUrl = publicUrl?.startsWith("http")
+            ? publicUrl
+            : `${baseUrl}${publicUrl || ""}`;
 
-        // 9. Print Label
-        await printLabel(pdfPath, ttnData.IntDocNumber);
+        await Shopify.updateMetafields(order.id, [
+            { namespace: "custom", key: "ttn_label_url", type: "url", value: fullLabelUrl },
+            { namespace: "custom", key: "ttn_number", type: "single_line_text_field", value: String(ttnNumber) },
+        ]);
 
-        // 10. Mark Processed - moved to start
+        console.log("🔗 TTN metafields saved in Shopify:", fullLabelUrl);
+
+        // Optional verify (won't break if service doesn't have it)
+        if (typeof Shopify.getOrderMetafieldValue === "function") {
+            const savedLabel = await Shopify.getOrderMetafieldValue(order.id, "custom", "ttn_label_url");
+            const savedTtn = await Shopify.getOrderMetafieldValue(order.id, "custom", "ttn_number");
+            console.log("🔎 Shopify saved ttn_label_url:", savedLabel);
+            console.log("🔎 Shopify saved ttn_number:", savedTtn);
+        }
+
+        // 9) Print
+        await printLabel(pdfPath, ttnNumber);
 
         return res.json({
             ok: true,
-            message: "✅ ТТН створено. Етикетка збережена.",
+            message: "✅ ТТН створено. Етикетка збережена/надрукована.",
             order_id: orderKey,
-            ttn: ttnData.IntDocNumber,
+            ttn: ttnNumber,
             label_url: publicUrl,
             payment_link: paymentUrl || "—",
             mono_invoice_id: monoResult?.invoiceId || "—",
         });
-
     } catch (err) {
-        console.error("🚨 Помилка:", err.message);
-        return res.status(500).json({ error: err.message });
+        const details = err?.response?.data || err;
+        console.error("🚨 Помилка:", details?.message || err?.message || details);
+
+        rollbackProcessed();
+
+        return res.status(500).json({
+            ok: false,
+            error: err?.message || "Internal error",
+        });
     }
 }
