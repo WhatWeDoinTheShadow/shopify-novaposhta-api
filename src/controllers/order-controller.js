@@ -144,7 +144,7 @@ export async function handleNovaPoshta(req, res) {
             : `${baseUrl}${publicUrl || ""}`;
 
         await Shopify.updateMetafields(order.id, [
-            { namespace: "custom", key: "ttn_label_url", type: "url", value: fullLabelUrl },
+            { namespace: "custom", key: "np_ttn_pdf", type: "url", value: fullLabelUrl },
             { namespace: "custom", key: "ttn_number", type: "single_line_text_field", value: String(ttnNumber) },
         ]);
 
