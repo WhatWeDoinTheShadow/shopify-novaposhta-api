@@ -168,6 +168,22 @@ function isParcelLocker(address1) {
 }
 
 // =======================
+// FIX #A: extract NP point number from address1 correctly
+// "Тарнавського 7 4244" -> 4244 (NOT 7)
+// =======================
+function extractNpPointNumber(raw) {
+  const s = String(raw || "");
+  const nums = s.match(/\d{1,6}/g) || [];
+  if (!nums.length) return null;
+
+  // prefer last number with length >= 3 (most NP numbers are 3-6 digits)
+  for (let i = nums.length - 1; i >= 0; i--) {
+    if (nums[i].length >= 3) return nums[i];
+  }
+  return nums[nums.length - 1];
+}
+
+// =======================
 // Shopify helpers
 // =======================
 async function shopifyPutOrder(orderId, payload) {
@@ -293,29 +309,49 @@ async function npPost(apiKey, modelName, calledMethod, methodProperties, tries =
 // =======================
 // FIX #1: better city match (avoid Львів -> Київ)
 // =======================
-async function findCityRef(rawCityName, apiKey) {
-  const q = String(rawCityName || "Київ").trim();
-  const normalized = q.toLowerCase();
+function normCity(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[ʼ’`]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  console.log("🏙️ Пошук міста:", q);
-  const cityData = await npPost(apiKey, "Address", "getCities", { FindByString: q });
+async function findCityRef(rawCityName, apiKey) {
+  const qRaw = String(rawCityName || "Київ").trim();
+  const q = normCity(qRaw);
+
+  console.log("🏙️ Пошук міста:", qRaw);
+  const cityData = await npPost(apiKey, "Address", "getCities", { FindByString: qRaw });
   const list = Array.isArray(cityData?.data) ? cityData.data : [];
   if (!list.length) return null;
 
-  const best =
-    list.find((c) => String(c?.Description || "").toLowerCase() === normalized) ||
-    list.find((c) => String(c?.DescriptionRu || "").toLowerCase() === normalized) ||
-    list.find((c) => String(c?.Description || "").toLowerCase().includes(normalized)) ||
-    list.find((c) => String(c?.DescriptionRu || "").toLowerCase().includes(normalized)) ||
-    list[0];
+  const exact =
+    list.find((c) => normCity(c?.Description) === q) ||
+    list.find((c) => normCity(c?.DescriptionRu) === q);
 
-  return best?.Ref || null;
+  if (exact?.Ref) return exact.Ref;
+
+  const starts =
+    list.find((c) => normCity(c?.Description).startsWith(q)) ||
+    list.find((c) => normCity(c?.DescriptionRu).startsWith(q));
+
+  if (starts?.Ref) return starts.Ref;
+
+  const contains =
+    list.find((c) => normCity(c?.Description).includes(q)) ||
+    list.find((c) => normCity(c?.DescriptionRu).includes(q));
+
+  return (contains?.Ref || list[0]?.Ref || null);
 }
 
+// =======================
+// FIX #A: warehouse search using extracted number + exact match by Number
+// =======================
 async function findWarehouseRef(warehouseName, cityRef, apiKey) {
   const wh = String(warehouseName || "").trim();
 
-  // Якщо прийшов Ref — пробуємо як Ref
+  // If it's already a Ref
   if (/^[0-9a-fA-F-]{20,}$/.test(wh)) {
     console.log("📦 Пробуємо як Ref відділення:", wh);
     const data = await npPost(apiKey, "AddressGeneral", "getWarehouses", { Ref: wh });
@@ -323,24 +359,20 @@ async function findWarehouseRef(warehouseName, cityRef, apiKey) {
     if (ref) return ref;
   }
 
-  const clean = wh
-    .replace(/нова\s?пошта/gi, "")
-    .replace(/nova\s?poshta/gi, "")
-    .replace(/відділення/gi, "")
-    .replace(/поштомат/gi, "")
-    .replace(/№/g, "")
-    .replace(/#/g, " ")
-    .trim();
-
-  const onlyNumber = clean.match(/\d+/)?.[0] || "1";
-  console.log(`🏤 Очищене відділення/поштомат: ${onlyNumber}`);
+  const num = extractNpPointNumber(wh) || "1";
+  console.log(`🏤 NП номер точки: ${num}`);
 
   const data = await npPost(apiKey, "AddressGeneral", "getWarehouses", {
     CityRef: cityRef,
-    FindByString: onlyNumber,
+    FindByString: String(num),
+    Limit: "20",
   });
 
-  return data?.data?.[0]?.Ref || null;
+  const list = Array.isArray(data?.data) ? data.data : [];
+  if (!list.length) return null;
+
+  const exact = list.find((w) => String(w?.Number || "") === String(num));
+  return (exact?.Ref || list[0]?.Ref || null);
 }
 
 // =======================
@@ -370,7 +402,7 @@ function buildSeatsBlocksFixed() {
     ],
   };
 
-  // Variant B (camelCase) – some NP accounts accept only this
+  // Variant B (camelCase)
   const seatsB = {
     SeatsAmount: "1",
     Weight: weight,
@@ -508,7 +540,8 @@ export async function handleNovaPoshta(req, res) {
     console.log("💰 Оплата:", paymentMethod);
     console.log("📦 COD:", cod, "| LOCKER:", locker);
 
-    const baseUrl = BASE_URL || `${req.protocol}://${req.get("host")}`;
+    // IMPORTANT: prefer BASE_URL for public links
+    const baseUrl = BASE_URL || `https://${req.get("host")}`;
 
     // ========= RULE: LOCKER + COD => NO TTN =========
     if (locker && cod) {
@@ -548,6 +581,12 @@ export async function handleNovaPoshta(req, res) {
 
           if (paymentUrl) {
             mfs.push({ namespace: "custom", key: "payment_link", type: "url", value: paymentUrl });
+            mfs.push({
+              namespace: "custom",
+              key: "mono_invoice_id",
+              type: "single_line_text_field",
+              value: String(monoInvoiceId || ""),
+            });
           }
 
           await shopifySetMetafields(order.id, mfs);
@@ -564,7 +603,8 @@ export async function handleNovaPoshta(req, res) {
         ok: true,
         blocked: true,
         reason: "locker_cod_not_allowed",
-        message: "⛔ Поштомат + COD: ТТН не створено. Створено payment link / order помічено в Shopify.",
+        message:
+          "⛔ Поштомат + COD: ТТН не створено. Створено payment link / order помічено в Shopify.",
         order_id: orderKey,
         payment_link: paymentUrl || "—",
         mono_invoice_id: monoInvoiceId || "—",
@@ -620,7 +660,9 @@ export async function handleNovaPoshta(req, res) {
 
     if (!CONTACT_RECIPIENT_REF) throw new Error("Не вдалося отримати CONTACT_RECIPIENT_REF");
 
-    // 3) payment link (тільки якщо НЕ COD)
+    // 3) payment link
+    // правило: створюємо тільки якщо НЕ COD (як було), але:
+    // якщо створили — записуємо в Shopify гарантовано
     let paymentUrl = null;
     let monoInvoiceId = null;
 
@@ -638,12 +680,15 @@ export async function handleNovaPoshta(req, res) {
       } catch (e) {
         console.error("🚨 Monobank create invoice failed:", e?.response?.data || e?.message || e);
       }
+    }
 
-      if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
-        await shopifySetMetafields(order.id, [
-          { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
-        ]);
-      }
+    // IMPORTANT: write payment link when it exists (even if later you change invoice rules)
+    if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
+      await shopifySetMetafields(order.id, [
+        { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
+        { namespace: "custom", key: "mono_invoice_id", type: "single_line_text_field", value: String(monoInvoiceId || "") },
+      ]);
+      console.log("✅ Shopify saved payment link");
     }
 
     // 4) Create TTN (Seats FIX with fallback)
@@ -709,7 +754,13 @@ export async function handleNovaPoshta(req, res) {
     let pdfResponse = null;
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
-        pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer", timeout: 25000 });
+        pdfResponse = await axios.get(labelUrl, {
+          responseType: "arraybuffer",
+          timeout: 30000,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+          headers: { Accept: "application/pdf" },
+        });
         break;
       } catch (e) {
         console.warn(`⚠️ Label retry ${attempt}/4:`, e?.message || e);
@@ -732,6 +783,7 @@ export async function handleNovaPoshta(req, res) {
         { namespace: "custom", key: "ttn_number", type: "single_line_text_field", value: String(ttnNumber) },
         { namespace: "custom", key: "ttn_label_url", type: "url", value: fullLabelUrl },
         { namespace: "custom", key: "np_point_type", type: "single_line_text_field", value: locker ? "locker" : "branch" },
+        { namespace: "custom", key: "np_point_number", type: "single_line_text_field", value: String(extractNpPointNumber(address1) || "") },
         { namespace: "custom", key: "np_seat_weight", type: "number_decimal", value: String(PARCEL.weightKg) },
         { namespace: "custom", key: "np_seat_dims_cm", type: "single_line_text_field", value: `${PARCEL.lengthCm}x${PARCEL.widthCm}x${PARCEL.heightCm}` },
         { namespace: "custom", key: "np_seat_volume_m3", type: "number_decimal", value: String(calcVolumeM3(PARCEL)) },
