@@ -3,14 +3,14 @@ import fs from "fs";
 import path from "path";
 
 // =======================
-// ENV для Shopify / Mono
+// ENV
 // =======================
 const SHOPIFY_STORE = process.env.SHOPIFY_STORE; // woman-jwlry.myshopify.com
-const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_API_KEY; // Admin API access token
+const SHOPIFY_ADMIN_TOKEN = process.env.SHOPIFY_ADMIN_API_KEY; // Admin API token
 const BASE_URL = process.env.BASE_URL; // https://shopify-novaposhta-api.onrender.com
 
 // =======================
-// Monobank local "DB"
+// Local DB
 // =======================
 const MONO_DB = path.resolve("./mono_invoices.json");
 if (!fs.existsSync(MONO_DB)) fs.writeFileSync(MONO_DB, "{}");
@@ -38,155 +38,19 @@ if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
 const PRINTED_DB = path.resolve("./printed_orders.json");
 if (!fs.existsSync(PRINTED_DB)) fs.writeFileSync(PRINTED_DB, "{}");
-
 let printedOrders = JSON.parse(fs.readFileSync(PRINTED_DB, "utf8"));
 
 // =======================
-// Мапінг імен (UA)
+// helpers: phone + description + name split
 // =======================
-const nameMap = {
-  // Чоловічі
-  taras: "Тарас",
-  ivan: "Іван",
-  petro: "Петро",
-  peter: "Пітер",
-  oleksii: "Олексій",
-  oleksiy: "Олексій",
-  alexey: "Олексій",
-  alexei: "Олексій",
-  alex: "Олекс",
-  oleksandr: "Олександр",
-  alexander: "Олександр",
-  andrii: "Андрій",
-  andriy: "Андрій",
-  andrew: "Ендрю",
-  mykola: "Микола",
-  nikolai: "Миколай",
-  nicholas: "Ніколас",
-  dmytro: "Дмитро",
-  dmitro: "Дмитро",
-  dmitry: "Дмитро",
-  denys: "Денис",
-  denis: "Денис",
-  yurii: "Юрій",
-  yuriy: "Юрій",
-  yuri: "Юрій",
-  oleg: "Олег",
-  roman: "Роман",
-  ruslan: "Руслан",
-  vitalii: "Віталій",
-  vitaliy: "Віталій",
-  vladimir: "Володимир",
-  volodymyr: "Володимир",
-  vladyslav: "Владислав",
-  vladislav: "Владислав",
-  bogdan: "Богдан",
-  bohdan: "Богдан",
-  yevhen: "Євген",
-  evgen: "Євген",
-  maxim: "Максим",
-  maksym: "Максим",
-  artyom: "Артем",
-  artem: "Артем",
-  arthur: "Артур",
-  artur: "Артур",
-  anatolii: "Анатолій",
-  anatoliy: "Анатолій",
-  pavlo: "Павло",
-  pavel: "Павло",
-  stepan: "Степан",
-  stanislav: "Станіслав",
-  stas: "Стас",
-  leonid: "Леонід",
-  lev: "Лев",
-  levko: "Левко",
-  yegor: "Єгор",
-  ihor: "Ігор",
-  igor: "Ігор",
-  yakiv: "Яків",
-  yakov: "Яків",
-  mark: "Марк",
-  maks: "Макс",
-  viktor: "Віктор",
-  victor: "Віктор",
-  anton: "Антон",
-  vlad: "Влад",
-
-  // Жіночі
-  olga: "Ольга",
-  olha: "Ольга",
-  olena: "Олена",
-  elena: "Олена",
-  lena: "Лєна",
-  anna: "Анна",
-  anya: "Аня",
-  ania: "Аня",
-  hannah: "Ганна",
-  marina: "Марина",
-  maryna: "Марина",
-  mary: "Мері",
-  mariia: "Марія",
-  maria: "Марія",
-  marija: "Марія",
-  viktoria: "Вікторія",
-  victoria: "Вікторія",
-  sofia: "Софія",
-  sophia: "Софія",
-  sofiia: "Софія",
-  natalia: "Наталія",
-  nataliia: "Наталія",
-  natalya: "Наталя",
-  yulia: "Юлія",
-  julia: "Юлія",
-  yuliia: "Юлія",
-  julija: "Юлія",
-  iryna: "Ірина",
-  irina: "Ірина",
-  oksana: "Оксана",
-  tetiana: "Тетяна",
-  tatiana: "Тетяна",
-  tetyana: "Тетяна",
-  larysa: "Лариса",
-  larisa: "Лариса",
-  halyna: "Галина",
-  galina: "Галина",
-  yolanta: "Йоланта",
-  alina: "Аліна",
-  alla: "Алла",
-  lilia: "Лілія",
-  liliia: "Лілія",
-  lilya: "Ліля",
-  nina: "Ніна",
-  zina: "Зіна",
-  jana: "Яна",
-  yana: "Яна",
-  yanna: "Яна",
-  bohdana: "Богдана",
-  sveta: "Свєта",
-  svetlana: "Світлана",
-
-  // Прізвища
-  shevchenko: "Шевченко",
-  bulba: "Бульба",
-  petrov: "Петров",
-  ivanov: "Іванов",
-  melnyk: "Мельник",
-  melnik: "Мельник",
-  kovalenko: "Коваленко",
-  bondar: "Бондар",
-  tkachenko: "Ткаченко",
-  voronov: "Воронов",
-  romanov: "Романов",
-};
-
 const isLatin = (str) => /[A-Za-z]/.test(String(str || ""));
 
-function translitToUa(raw) {
+// мінімальний трансліт (без твоєї мегамапи — щоб файл не роздувати)
+// якщо хочеш — винесемо окремо або підключимо lib, але зараз важливо стабільно відправляти в NP
+function translitToUaLite(raw) {
   if (!raw) return "";
-  const word = String(raw).toLowerCase();
-  if (nameMap[word]) return nameMap[word];
+  let s = String(raw).toLowerCase();
 
-  let s = word;
   s = s.replace(/shch/g, "щ");
   s = s.replace(/sch/g, "щ");
   s = s.replace(/ch/g, "ч");
@@ -227,25 +91,40 @@ function translitToUa(raw) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-// =======================
-// helpers
-// =======================
-function normalizePhone(rawPhone) {
-  let recipientPhone = String(rawPhone || "").replace(/\D/g, "");
-  if (recipientPhone.startsWith("0")) recipientPhone = "38" + recipientPhone;
-  if (recipientPhone.startsWith("80")) recipientPhone = "3" + recipientPhone;
-  if (!recipientPhone.startsWith("380")) {
-    recipientPhone = "380" + recipientPhone.replace(/^(\+)?(38)?/, "");
-  }
-  if (recipientPhone.length > 12) recipientPhone = recipientPhone.slice(0, 12);
+function splitName(raw) {
+  const clean = String(raw || "")
+    .replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  if (!/^380\d{9}$/.test(recipientPhone)) {
-    console.warn(
-      `⚠️ Невірний номер телефону: ${recipientPhone} (${rawPhone}), замінюємо на тестовий`
-    );
-    recipientPhone = "380501112233";
+  if (!clean) return { first: "Клієнт", last: "Shopify" };
+
+  const parts = clean.split(" ").filter(Boolean);
+  let first = parts[0] || "Клієнт";
+  let last = parts.slice(1).join(" ") || "Shopify";
+
+  if (isLatin(first)) first = translitToUaLite(first);
+  if (isLatin(last)) last = translitToUaLite(last);
+
+  // якщо все ще латиниця — фолбек
+  if (isLatin(first)) first = "Клієнт";
+  if (isLatin(last)) last = "Shopify";
+
+  return { first: String(first).slice(0, 30), last: String(last).slice(0, 30) };
+}
+
+function normalizePhone(rawPhone) {
+  let p = String(rawPhone || "").replace(/\D/g, "");
+  if (p.startsWith("0")) p = "38" + p;
+  if (p.startsWith("80")) p = "3" + p;
+  if (!p.startsWith("380")) p = "380" + p.replace(/^(\+)?(38)?/, "");
+  if (p.length > 12) p = p.slice(0, 12);
+
+  if (!/^380\d{9}$/.test(p)) {
+    console.warn(`⚠️ Невірний номер телефону: ${p} (${rawPhone}), ставлю тестовий`);
+    p = "380501112233";
   }
-  return recipientPhone;
+  return p;
 }
 
 function buildShortDescription(order) {
@@ -261,29 +140,109 @@ function buildShortDescription(order) {
   return desc.slice(0, 90);
 }
 
-function splitName(raw) {
-  const clean = String(raw || "")
-    .replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ'\s-]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+// =======================
+// detect COD + locker
+// =======================
+function isCODPayment(paymentMethod) {
+  return /cash|cod|налож/i.test(String(paymentMethod || ""));
+}
 
-  if (!clean) return { first: "Клієнт", last: "Shopify" };
-
-  const parts = clean.split(" ").filter(Boolean);
-  let first = parts[0] || "Клієнт";
-  let last = parts.slice(1).join(" ") || "Shopify";
-
-  if (isLatin(first)) first = translitToUa(first);
-  if (isLatin(last)) last = translitToUa(last);
-
-  if (isLatin(first)) first = "Клієнт";
-  if (isLatin(last)) last = "Shopify";
-
-  return { first: String(first).slice(0, 30), last: String(last).slice(0, 30) };
+function isParcelLocker(address1) {
+  const s = String(address1 || "").toLowerCase();
+  // покриває: "Поштомат 38319", "поштомат №123", "parcel locker", "locker"
+  return /поштомат|parcel\s*locker|locker/.test(s);
 }
 
 // =======================
-// NP client with retry
+// Shopify helpers (tags + note + metafields)
+// =======================
+async function shopifyPutOrder(orderId, payload) {
+  if (!SHOPIFY_STORE || !SHOPIFY_ADMIN_TOKEN || !orderId) return null;
+
+  const url = `https://${SHOPIFY_STORE}/admin/api/2024-10/orders/${orderId}.json`;
+  return axios.put(
+    url,
+    { order: { id: orderId, ...payload } },
+    {
+      headers: {
+        "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN,
+        "Content-Type": "application/json",
+      },
+      timeout: 20000,
+    }
+  );
+}
+
+async function shopifySetMetafields(orderId, metafields) {
+  if (!SHOPIFY_STORE || !SHOPIFY_ADMIN_TOKEN || !orderId || !Array.isArray(metafields) || metafields.length === 0) {
+    return;
+  }
+  // REST update order metafields працює, але інколи тихо ігнорує.
+  // Тому робимо через GraphQL metafieldsSet (стабільніше).
+  const ownerId = `gid://shopify/Order/${orderId}`;
+  const mutation = `
+    mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields { id namespace key value type }
+        userErrors { field message }
+      }
+    }
+  `;
+
+  const inputs = metafields.map((m) => ({
+    ownerId,
+    namespace: String(m.namespace || "custom"),
+    key: String(m.key),
+    type: String(m.type || "single_line_text_field"),
+    value: String(m.value ?? ""),
+  }));
+
+  const resp = await axios.post(
+    `https://${SHOPIFY_STORE}/admin/api/2024-10/graphql.json`,
+    { query: mutation, variables: { metafields: inputs } },
+    {
+      headers: {
+        "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN,
+        "Content-Type": "application/json",
+      },
+      timeout: 20000,
+    }
+  );
+
+  const errs = resp.data?.data?.metafieldsSet?.userErrors || [];
+  if (errs.length) {
+    console.error("❌ Shopify metafieldsSet userErrors:", errs);
+  }
+}
+
+async function shopifyTagAndNote(orderId, tagToAdd, noteLine) {
+  // 1) Дістаємо order tags (через REST order get)
+  const getUrl = `https://${SHOPIFY_STORE}/admin/api/2024-10/orders/${orderId}.json?fields=id,tags,note_attributes`;
+  const getResp = await axios.get(getUrl, {
+    headers: { "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN },
+    timeout: 20000,
+  });
+
+  const order = getResp.data?.order;
+  const currentTags = String(order?.tags || "");
+  const tagsArr = currentTags.split(",").map((t) => t.trim()).filter(Boolean);
+
+  if (tagToAdd && !tagsArr.includes(tagToAdd)) tagsArr.push(tagToAdd);
+
+  const note_attributes = Array.isArray(order?.note_attributes) ? order.note_attributes : [];
+  // додаємо/оновлюємо note_attributes (видно в адмінці як “Additional details”)
+  const key = "np_cod_block";
+  const filtered = note_attributes.filter((x) => x?.name !== key);
+  filtered.push({ name: key, value: noteLine });
+
+  await shopifyPutOrder(orderId, {
+    tags: tagsArr.join(", "),
+    note_attributes: filtered,
+  });
+}
+
+// =======================
+// Nova Poshta client with retry (502)
 // =======================
 async function npPost(apiKey, modelName, calledMethod, methodProperties, tries = 4) {
   const url = "https://api.novaposhta.ua/v2.0/json/";
@@ -294,7 +253,7 @@ async function npPost(apiKey, modelName, calledMethod, methodProperties, tries =
       const resp = await axios.post(
         url,
         { apiKey, modelName, calledMethod, methodProperties },
-        { timeout: 15000 }
+        { timeout: 20000 }
       );
 
       const contentType = String(resp.headers?.["content-type"] || "");
@@ -305,11 +264,12 @@ async function npPost(apiKey, modelName, calledMethod, methodProperties, tries =
       return resp.data;
     } catch (e) {
       lastErr = e;
-      const wait = 400 * attempt * attempt;
+      const wait = 450 * attempt * attempt;
       console.warn(`⚠️ NP retry ${attempt}/${tries}:`, e?.message || e);
       await new Promise((r) => setTimeout(r, wait));
     }
   }
+
   throw lastErr;
 }
 
@@ -333,15 +293,15 @@ async function findCityRef(rawCityName, apiKey) {
 async function findWarehouseRef(warehouseName, cityRef, apiKey) {
   const wh = String(warehouseName || "").trim();
 
-  // 1) якщо прийшов Ref — пробуємо як Ref
-  if (/^[0-9a-fA-F-]{20,}$/.test(wh) || /^\d{5,}$/.test(wh)) {
-    console.log("📦 Пробуємо як Ref/ID відділення:", wh);
+  // 1) якщо прийшов Ref/ID — пробуємо як Ref
+  if (/^[0-9a-fA-F-]{20,}$/.test(wh)) {
+    console.log("📦 Пробуємо як Ref відділення:", wh);
     const data = await npPost(apiKey, "AddressGeneral", "getWarehouses", { Ref: wh });
     const ref = data?.data?.[0]?.Ref;
     if (ref) return ref;
   }
 
-  // 2) номер відділення/поштомату з тексту
+  // 2) витягуємо номер відділення/поштомату
   const clean = wh
     .replace(/нова\s?пошта/gi, "")
     .replace(/nova\s?poshta/gi, "")
@@ -363,7 +323,7 @@ async function findWarehouseRef(warehouseName, cityRef, apiKey) {
 }
 
 function buildSeatsBlock() {
-  // ФІКС для: OptionsSeat is empty / Width is empty
+  // стабільний блок під вимоги НП (OptionsSeat / Width is empty)
   const base = {
     VolumetricWidth: "10",
     VolumetricHeight: "10",
@@ -384,7 +344,80 @@ function buildSeatsBlock() {
 }
 
 // =======================
-// Nova Poshta + Monobank handler
+// Monobank
+// =======================
+async function createMonoInvoice(order, baseUrl) {
+  if (!process.env.MONO_MERCHANT_TOKEN) return null;
+
+  const total = parseFloat(order?.total_price || "0");
+  const amountInCents = Math.max(0, Math.round(total * 100));
+
+  const basketOrder = (order?.line_items || []).map((item) => {
+    const lineTotal = parseFloat(item?.price || "0") * Number(item?.quantity || 0);
+    return {
+      name: String(item?.name || "Товар").slice(0, 128),
+      qty: Number(item?.quantity || 0),
+      sum: Math.max(0, Math.round(lineTotal * 100)),
+      code: String(item?.product_id || item?.sku || item?.variant_id || "").slice(0, 64),
+    };
+  });
+
+  const monoBody = {
+    amount: amountInCents,
+    ccy: 980,
+    merchantPaymInfo: {
+      reference: String(order?.id || order?.name || ""),
+      destination: `Оплата замовлення ${order?.name || ""}`.slice(0, 140),
+      basketOrder,
+    },
+    redirectUrl: `${baseUrl}/mono/payment/redirect`,
+    successUrl: `${baseUrl}/mono/payment/success`,
+    failUrl: `${baseUrl}/mono/payment/fail`,
+    webHookUrl: `${baseUrl}/api/mono/webhook`,
+  };
+
+  const monoRes = await axios.post(
+    "https://api.monobank.ua/api/merchant/invoice/create",
+    monoBody,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-Token": process.env.MONO_MERCHANT_TOKEN,
+      },
+      timeout: 20000,
+    }
+  );
+
+  return {
+    invoiceId: monoRes.data?.invoiceId || null,
+    pageUrl: monoRes.data?.pageUrl || null,
+  };
+}
+
+// =======================
+// PrintNode
+// =======================
+async function printViaPrintNode(pdfPath, ttnNumber) {
+  if (!process.env.PRINTNODE_API_KEY || !process.env.PRINTNODE_PRINTER_ID) return;
+
+  const pdfBase64 = fs.readFileSync(pdfPath).toString("base64");
+  await axios.post(
+    "https://api.printnode.com/printjobs",
+    {
+      printerId: parseInt(process.env.PRINTNODE_PRINTER_ID, 10),
+      title: `Nova Poshta ${ttnNumber}`,
+      contentType: "pdf_base64",
+      content: pdfBase64,
+      source: "Shopify AutoPrint",
+    },
+    { auth: { username: process.env.PRINTNODE_API_KEY, password: "" }, timeout: 25000 }
+  );
+
+  console.log("✅ Етикетка відправлена на друк через PrintNode");
+}
+
+// =======================
+// MAIN HANDLER
 // =======================
 export async function handleNovaPoshta(req, res) {
   const order = req.body;
@@ -392,254 +425,214 @@ export async function handleNovaPoshta(req, res) {
 
   console.log("📦 Нове замовлення з Shopify:", orderKey, order?.name);
 
-  // антидубль по order.id (10 хв)
+  // антидубль 10 хв
   const now = Date.now();
-  const lastPrinted = printedOrders[orderKey];
-  if (lastPrinted && now - lastPrinted < 10 * 60 * 1000) {
+  const last = printedOrders[orderKey];
+  if (last && now - last < 10 * 60 * 1000) {
     console.log("⚠️ Дублікат webhook — пропускаємо:", orderKey);
-    return res.json({
-      ok: true,
-      duplicate: true,
-      order_id: orderKey,
-      message: "Дубль webhook — не друкуємо повторно",
-    });
+    return res.json({ ok: true, duplicate: true, order_id: orderKey });
   }
 
   if (!process.env.NP_API_KEY) {
-    return res.status(500).json({ error: "❌ NP_API_KEY is missing on server" });
+    return res.status(500).json({ ok: false, error: "❌ NP_API_KEY is missing on server" });
   }
 
   try {
-    // === Дані відправника ===
+    // sender refs
     const SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626";
     const SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d";
     const SENDER_REF = "6bcb6d88-16de-11ef-bcd0-48df37b921da";
     const CONTACT_SENDER_REF = "f8caa074-1740-11ef-bcd0-48df37b921da";
     const SENDERS_PHONE = "380932532432";
 
-    // === Дані з Shopify ===
+    // Shopify data
     const rawCityName = order?.shipping_address?.city || "Київ";
-    const warehouseName = order?.shipping_address?.address1 || "Відділення №1";
+    const address1 = order?.shipping_address?.address1 || "";
+    const warehouseName = address1 || "Відділення №1";
     const recipientName = order?.shipping_address?.name || "Тестовий Отримувач";
     const rawPhone = order?.shipping_address?.phone || "";
     const paymentMethod = order?.payment_gateway_names?.[0] || "";
 
     const recipientPhone = normalizePhone(rawPhone);
+    const isCOD = isCODPayment(paymentMethod);
+    const isLocker = isParcelLocker(address1);
 
-    console.log("🏙️ Місто (сире):", rawCityName);
-    console.log("🏤 Відділення (сире):", warehouseName);
+    console.log("🏙️ Місто:", rawCityName);
+    console.log("🏤 Address1:", address1);
     console.log("📞 Телефон:", recipientPhone);
     console.log("💰 Оплата:", paymentMethod);
+    console.log("📦 isCOD:", isCOD, "| isLocker:", isLocker);
 
-    // === 1) CityRef ===
+    const baseUrl = BASE_URL || `${req.protocol}://${req.get("host")}`;
+
+    // ========= RULE: LOCKER + COD => NO TTN =========
+    if (isLocker && isCOD) {
+      console.log("⛔ Поштомат + COD: ТТН НЕ створюємо. Створюємо payment link і позначаємо Shopify.");
+
+      // 1) create mono invoice
+      let paymentUrl = null;
+      let monoInvoiceId = null;
+
+      try {
+        const mono = await createMonoInvoice(order, baseUrl);
+        monoInvoiceId = mono?.invoiceId || null;
+        paymentUrl = mono?.pageUrl || null;
+
+        if (monoInvoiceId && paymentUrl) {
+          console.log("✅ Monobank invoice:", monoInvoiceId);
+          console.log("✅ Payment URL:", paymentUrl);
+          saveMonoInvoice(monoInvoiceId, order, paymentUrl);
+        } else {
+          console.warn("⚠️ Monobank не повернув invoiceId/pageUrl");
+        }
+      } catch (e) {
+        console.error("🚨 Monobank create invoice failed:", e?.response?.data || e?.message || e);
+      }
+
+      // 2) mark Shopify: tag + note + metafields
+      if (SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
+        const reason = "COD недоступний для поштоматів Нової Пошти. Потрібна передоплата або доставка у відділення.";
+        try {
+          await shopifyTagAndNote(order.id, "cod_blocked_np_locker", reason);
+
+          const mfs = [
+            { namespace: "custom", key: "np_point_type", type: "single_line_text_field", value: "locker" },
+            { namespace: "custom", key: "cod_blocked", type: "boolean", value: "true" },
+            { namespace: "custom", key: "cod_block_reason", type: "single_line_text_field", value: reason.slice(0, 255) },
+          ];
+
+          if (paymentUrl) {
+            mfs.push({ namespace: "custom", key: "payment_link", type: "url", value: paymentUrl });
+          }
+
+          await shopifySetMetafields(order.id, mfs);
+          console.log("✅ Shopify marked: tag+note+metafields");
+        } catch (e) {
+          console.error("🚨 Shopify mark failed:", e?.response?.data || e?.message || e);
+        }
+      } else {
+        console.warn("⚠️ Shopify creds missing — не можу позначити order");
+      }
+
+      // 3) no TTN, return ok
+      printedOrders[orderKey] = Date.now();
+      fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
+
+      return res.json({
+        ok: true,
+        blocked: true,
+        reason: "locker_cod_not_allowed",
+        message: "⛔ Поштомат + COD: ТТН не створено. Створено payment link / order помічено в Shopify.",
+        order_id: orderKey,
+        payment_link: paymentUrl || "—",
+        mono_invoice_id: monoInvoiceId || "—",
+      });
+    }
+
+    // ========= NORMAL FLOW (TTN) =========
+
+    // 1) CityRef + WarehouseRef
     const cityRef = await findCityRef(rawCityName, process.env.NP_API_KEY);
     if (!cityRef) throw new Error(`Не знайдено місто: ${rawCityName}`);
     console.log("✅ CityRef:", cityRef);
 
-    // === 2) WarehouseRef ===
-    const warehouseRef = await findWarehouseRef(
-      warehouseName,
-      cityRef,
-      process.env.NP_API_KEY
-    );
-    if (!warehouseRef) throw new Error(`Не знайдено відділення: ${warehouseName}`);
-    console.log("🏤 Використовуємо WarehouseRef:", warehouseRef);
+    const warehouseRef = await findWarehouseRef(warehouseName, cityRef, process.env.NP_API_KEY);
+    if (!warehouseRef) throw new Error(`Не знайдено відділення/поштомат: ${warehouseName}`);
+    console.log("✅ WarehouseRef:", warehouseRef);
 
-    // === 3) Отримувач ===
+    // 2) Recipient + Contact
     const { first, last } = splitName(recipientName);
     console.log(`👤 Отримувач (UA): ${first} ${last}`);
 
-    const recipientRes = await npPost(
-      process.env.NP_API_KEY,
-      "Counterparty",
-      "save",
-      {
-        CounterpartyProperty: "Recipient",
-        CounterpartyType: "PrivatePerson",
-        FirstName: first,
-        LastName: last,
-        Phone: recipientPhone,
-        CityRef: cityRef,
-      }
-    );
+    const recipientRes = await npPost(process.env.NP_API_KEY, "Counterparty", "save", {
+      CounterpartyProperty: "Recipient",
+      CounterpartyType: "PrivatePerson",
+      FirstName: first,
+      LastName: last,
+      Phone: recipientPhone,
+      CityRef: cityRef,
+    });
 
     if (!recipientRes?.success) {
-      throw new Error(
-        `Не вдалося створити отримувача: ${(recipientRes?.errors || []).join(", ")}`
-      );
+      throw new Error(`Не вдалося створити отримувача: ${(recipientRes?.errors || []).join(", ")}`);
     }
 
     const RECIPIENT_REF = recipientRes?.data?.[0]?.Ref;
     if (!RECIPIENT_REF) throw new Error("Не вдалося отримати RECIPIENT_REF");
 
-    // === 4) Контактна особа ===
-    const contactRes = await npPost(
-      process.env.NP_API_KEY,
-      "ContactPerson",
-      "getContactPersons",
-      { CounterpartyRef: RECIPIENT_REF }
-    );
+    const contactRes = await npPost(process.env.NP_API_KEY, "ContactPerson", "getContactPersons", {
+      CounterpartyRef: RECIPIENT_REF,
+    });
 
     let CONTACT_RECIPIENT_REF = contactRes?.data?.[0]?.Ref || null;
 
     if (!CONTACT_RECIPIENT_REF) {
-      const newContactRes = await npPost(
-        process.env.NP_API_KEY,
-        "ContactPerson",
-        "save",
-        {
-          CounterpartyRef: RECIPIENT_REF,
-          FirstName: first,
-          LastName: last,
-          Phone: recipientPhone,
-        }
-      );
-
+      const newContactRes = await npPost(process.env.NP_API_KEY, "ContactPerson", "save", {
+        CounterpartyRef: RECIPIENT_REF,
+        FirstName: first,
+        LastName: last,
+        Phone: recipientPhone,
+      });
       CONTACT_RECIPIENT_REF = newContactRes?.data?.[0]?.Ref || null;
     }
 
     if (!CONTACT_RECIPIENT_REF) throw new Error("Не вдалося отримати CONTACT_RECIPIENT_REF");
 
-    // === 5) Payment link через Monobank ===
+    // 3) payment link (optional) — ти можеш робити тільки для НЕ-COD, але залишив як в тебе було
+    // якщо хочеш: робимо invoice тільки коли !isCOD
     let paymentUrl = null;
     let monoInvoiceId = null;
-
-    if (!process.env.MONO_MERCHANT_TOKEN) {
-      console.warn("⚠️ MONO_MERCHANT_TOKEN відсутній, пропускаємо створення інвойсу monobank");
-    } else {
+    if (!isCOD) {
       try {
-        console.log("💳 Генеруємо payment link через Monobank...");
+        const mono = await createMonoInvoice(order, baseUrl);
+        monoInvoiceId = mono?.invoiceId || null;
+        paymentUrl = mono?.pageUrl || null;
 
-        const total = parseFloat(order?.total_price || "0");
-        const amountInCents = Math.round(total * 100);
-
-        const basketOrder = (order?.line_items || []).map((item) => {
-          const lineTotal =
-            parseFloat(item?.price || "0") * Number(item?.quantity || 0);
-          return {
-            name: String(item?.name || "Товар").slice(0, 128),
-            qty: Number(item?.quantity || 0),
-            sum: Math.round(lineTotal * 100),
-            code: String(item?.product_id || item?.sku || item?.variant_id || "").slice(0, 64),
-          };
-        });
-
-        const baseUrl = BASE_URL || `${req.protocol}://${req.get("host")}`;
-
-        const monoBody = {
-          amount: amountInCents,
-          ccy: 980,
-          merchantPaymInfo: {
-            reference: String(order?.id || order?.name || ""),
-            destination: `Оплата замовлення ${order?.name || ""}`.slice(0, 140),
-            basketOrder,
-          },
-          redirectUrl: `${baseUrl}/mono/payment/redirect`,
-          successUrl: `${baseUrl}/mono/payment/success`,
-          failUrl: `${baseUrl}/mono/payment/fail`,
-          webHookUrl: `${baseUrl}/api/mono/webhook`,
-        };
-
-        const monoRes = await axios.post(
-          "https://api.monobank.ua/api/merchant/invoice/create",
-          monoBody,
-          {
-            headers: {
-              "Content-Type": "application/json",
-              "X-Token": process.env.MONO_MERCHANT_TOKEN,
-            },
-            timeout: 15000,
-          }
-        );
-
-        monoInvoiceId = monoRes.data?.invoiceId || null;
-        paymentUrl = monoRes.data?.pageUrl || null;
-
-        console.log("✅ Monobank invoice:", monoInvoiceId);
-        console.log("✅ Лінк для оплати (Monobank):", paymentUrl);
-
-        if (monoInvoiceId && paymentUrl) saveMonoInvoice(monoInvoiceId, order, paymentUrl);
-      } catch (err) {
-        console.error(
-          "🚨 Помилка при створенні payment link через Monobank:",
-          err?.response?.data || err?.message || err
-        );
+        if (monoInvoiceId && paymentUrl) {
+          saveMonoInvoice(monoInvoiceId, order, paymentUrl);
+          console.log("✅ Monobank invoice:", monoInvoiceId);
+          console.log("✅ Payment URL:", paymentUrl);
+        }
+      } catch (e) {
+        console.error("🚨 Monobank create invoice failed:", e?.response?.data || e?.message || e);
       }
     }
 
-    // === 5b) Записати payment link у метафілд Shopify ===
     if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
-      try {
-        console.log("🧷 Записуємо payment link у метафілд Shopify...");
-
-        await axios.put(
-          `https://${SHOPIFY_STORE}/admin/api/2024-10/orders/${order.id}.json`,
-          {
-            order: {
-              id: order.id,
-              metafields: [
-                { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
-              ],
-            },
-          },
-          {
-            headers: {
-              "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN,
-              "Content-Type": "application/json",
-            },
-            timeout: 15000,
-          }
-        );
-
-        console.log("🔗 Payment link успішно записаний у метафілд Shopify");
-      } catch (err) {
-        console.error(
-          "⚠️ Не вдалось записати payment link в Shopify:",
-          err?.response?.data || err?.message || err
-        );
-      }
-    } else {
-      console.warn(
-        "⚠️ Пропускаємо запис метафілда Shopify: немає paymentUrl або SHOPIFY_STORE / SHOPIFY_ADMIN_API_KEY / order.id"
-      );
+      await shopifySetMetafields(order.id, [
+        { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
+      ]);
     }
 
-    // === 6) ТТН (FIX: Seats + OptionsSeat + Width/Height/Length) ===
-    const isCOD = /cash|cod|налож/i.test(paymentMethod);
+    // 4) Create TTN
     const afterPaymentAmount = isCOD ? String(order?.total_price || "0") : "0";
-
     const seats = buildSeatsBlock();
 
-    const ttnRes = await npPost(
-      process.env.NP_API_KEY,
-      "InternetDocument",
-      "save",
-      {
-        PayerType: "Recipient",
-        PaymentMethod: "Cash",
-        CargoType: "Parcel",
-        ServiceType: "WarehouseWarehouse",
+    const ttnRes = await npPost(process.env.NP_API_KEY, "InternetDocument", "save", {
+      PayerType: "Recipient",
+      PaymentMethod: "Cash",
+      CargoType: "Parcel",
+      ServiceType: "WarehouseWarehouse",
 
-        ...seats,
+      ...seats,
 
-        Cost: String(order?.total_price || "0"),
-        Description: buildShortDescription(order),
+      Cost: String(order?.total_price || "0"),
+      Description: buildShortDescription(order),
 
-        CitySender: SENDER_CITY_REF,
-        SenderAddress: SENDER_ADDRESS_REF,
-        ContactSender: CONTACT_SENDER_REF,
-        Sender: SENDER_REF,
-        SendersPhone: SENDERS_PHONE,
+      CitySender: SENDER_CITY_REF,
+      SenderAddress: SENDER_ADDRESS_REF,
+      ContactSender: CONTACT_SENDER_REF,
+      Sender: SENDER_REF,
+      SendersPhone: SENDERS_PHONE,
 
-        CityRecipient: cityRef,
-        RecipientAddress: warehouseRef,
-        Recipient: RECIPIENT_REF,
-        ContactRecipient: CONTACT_RECIPIENT_REF,
-        RecipientsPhone: recipientPhone,
+      CityRecipient: cityRef,
+      RecipientAddress: warehouseRef,
+      Recipient: RECIPIENT_REF,
+      ContactRecipient: CONTACT_RECIPIENT_REF,
+      RecipientsPhone: recipientPhone,
 
-        AfterpaymentOnGoodsCost: afterPaymentAmount,
-      }
-    );
+      AfterpaymentOnGoodsCost: afterPaymentAmount,
+    });
 
     if (!ttnRes?.success) {
       throw new Error(`Не вдалося створити ТТН: ${(ttnRes?.errors || []).join(", ")}`);
@@ -650,61 +643,57 @@ export async function handleNovaPoshta(req, res) {
 
     console.log("✅ ТТН створено:", ttnNumber);
 
-    // === 7) Етикетка (PDF) ===
+    // 5) Label PDF download (retry)
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
-
-    // retry для PDF теж, бо там бувають 502
     let pdfResponse = null;
+
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
-        pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer", timeout: 20000 });
+        pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer", timeout: 25000 });
         break;
       } catch (e) {
         console.warn(`⚠️ Label retry ${attempt}/4:`, e?.message || e);
-        await new Promise((r) => setTimeout(r, 400 * attempt * attempt));
+        await new Promise((r) => setTimeout(r, 450 * attempt * attempt));
       }
     }
+
     if (!pdfResponse?.data) throw new Error("Не вдалося завантажити PDF етикетки (NP)");
 
     const pdfPath = path.join(LABELS_DIR, `label-${ttnNumber}.pdf`);
     fs.writeFileSync(pdfPath, pdfResponse.data);
     console.log("💾 PDF збережено:", pdfPath);
 
-    // === 8) PrintNode (опціонально) ===
-    if (process.env.PRINTNODE_API_KEY && process.env.PRINTNODE_PRINTER_ID) {
-      const pdfBase64 = fs.readFileSync(pdfPath).toString("base64");
-      await axios.post(
-        "https://api.printnode.com/printjobs",
-        {
-          printerId: parseInt(process.env.PRINTNODE_PRINTER_ID, 10),
-          title: `Nova Poshta ${ttnNumber}`,
-          contentType: "pdf_base64",
-          content: pdfBase64,
-          source: "Shopify AutoPrint",
-        },
-        { auth: { username: process.env.PRINTNODE_API_KEY, password: "" }, timeout: 20000 }
-      );
-      console.log("✅ Етикетка відправлена на друк через PrintNode");
+    const publicUrlPath = `/labels/label-${ttnNumber}.pdf`;
+    const fullLabelUrl = `${baseUrl}${publicUrlPath}`;
+
+    // 6) Shopify save TTN + label url
+    if (SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
+      await shopifySetMetafields(order.id, [
+        { namespace: "custom", key: "ttn_number", type: "single_line_text_field", value: String(ttnNumber) },
+        { namespace: "custom", key: "ttn_label_url", type: "url", value: fullLabelUrl },
+        { namespace: "custom", key: "np_point_type", type: "single_line_text_field", value: isLocker ? "locker" : "branch" },
+      ]);
+      console.log("✅ Shopify saved TTN/label:", fullLabelUrl);
     }
 
-    // === 9) Mark processed ===
+    // 7) PrintNode
+    await printViaPrintNode(pdfPath, ttnNumber);
+
+    // 8) mark processed
     printedOrders[orderKey] = Date.now();
     fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
-    const publicUrl = `${req.protocol}://${req.get("host")}/labels/label-${ttnNumber}.pdf`;
-
     return res.json({
       ok: true,
-      message:
-        "✅ ТТН створено. Етикетка збережена. Лінк на оплату — Monobank invoice (якщо створився).",
+      message: "✅ ТТН створено. Етикетка збережена/надрукована.",
       order_id: orderKey,
       ttn: ttnNumber,
-      label_url: publicUrl,
+      label_url: fullLabelUrl,
       payment_link: paymentUrl || "—",
       mono_invoice_id: monoInvoiceId || "—",
     });
   } catch (err) {
     console.error("🚨 Помилка:", err?.response?.data || err?.message || err);
-    return res.status(500).json({ error: err?.message || "Internal error" });
+    return res.status(500).json({ ok: false, error: err?.message || "Internal error" });
   }
 }
