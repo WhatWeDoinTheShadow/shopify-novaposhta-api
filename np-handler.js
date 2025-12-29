@@ -41,12 +41,28 @@ if (!fs.existsSync(PRINTED_DB)) fs.writeFileSync(PRINTED_DB, "{}");
 let printedOrders = JSON.parse(fs.readFileSync(PRINTED_DB, "utf8"));
 
 // =======================
+// CONSTANT PARCEL SIZE (from NP cabinet)
+// 1 place: 0.3 kg, 22 x 15 x 5 cm
+// =======================
+const PARCEL = {
+  weightKg: 0.3,
+  lengthCm: 22,
+  widthCm: 15,
+  heightCm: 5,
+};
+
+// m³: (cm³)/1e6
+function calcVolumeM3({ lengthCm, widthCm, heightCm }) {
+  const v = (Number(lengthCm) * Number(widthCm) * Number(heightCm)) / 1_000_000;
+  return Number(v.toFixed(6));
+}
+
+// =======================
 // helpers: phone + description + name split
 // =======================
 const isLatin = (str) => /[A-Za-z]/.test(String(str || ""));
 
-// мінімальний трансліт (без твоєї мегамапи — щоб файл не роздувати)
-// якщо хочеш — винесемо окремо або підключимо lib, але зараз важливо стабільно відправляти в NP
+// мінімальний трансліт
 function translitToUaLite(raw) {
   if (!raw) return "";
   let s = String(raw).toLowerCase();
@@ -106,7 +122,6 @@ function splitName(raw) {
   if (isLatin(first)) first = translitToUaLite(first);
   if (isLatin(last)) last = translitToUaLite(last);
 
-  // якщо все ще латиниця — фолбек
   if (isLatin(first)) first = "Клієнт";
   if (isLatin(last)) last = "Shopify";
 
@@ -149,12 +164,11 @@ function isCODPayment(paymentMethod) {
 
 function isParcelLocker(address1) {
   const s = String(address1 || "").toLowerCase();
-  // покриває: "Поштомат 38319", "поштомат №123", "parcel locker", "locker"
   return /поштомат|parcel\s*locker|locker/.test(s);
 }
 
 // =======================
-// Shopify helpers (tags + note + metafields)
+// Shopify helpers
 // =======================
 async function shopifyPutOrder(orderId, payload) {
   if (!SHOPIFY_STORE || !SHOPIFY_ADMIN_TOKEN || !orderId) return null;
@@ -174,11 +188,16 @@ async function shopifyPutOrder(orderId, payload) {
 }
 
 async function shopifySetMetafields(orderId, metafields) {
-  if (!SHOPIFY_STORE || !SHOPIFY_ADMIN_TOKEN || !orderId || !Array.isArray(metafields) || metafields.length === 0) {
+  if (
+    !SHOPIFY_STORE ||
+    !SHOPIFY_ADMIN_TOKEN ||
+    !orderId ||
+    !Array.isArray(metafields) ||
+    metafields.length === 0
+  ) {
     return;
   }
-  // REST update order metafields працює, але інколи тихо ігнорує.
-  // Тому робимо через GraphQL metafieldsSet (стабільніше).
+
   const ownerId = `gid://shopify/Order/${orderId}`;
   const mutation = `
     mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -210,27 +229,28 @@ async function shopifySetMetafields(orderId, metafields) {
   );
 
   const errs = resp.data?.data?.metafieldsSet?.userErrors || [];
-  if (errs.length) {
-    console.error("❌ Shopify metafieldsSet userErrors:", errs);
-  }
+  if (errs.length) console.error("❌ Shopify metafieldsSet userErrors:", errs);
 }
 
 async function shopifyTagAndNote(orderId, tagToAdd, noteLine) {
-  // 1) Дістаємо order tags (через REST order get)
+  if (!SHOPIFY_STORE || !SHOPIFY_ADMIN_TOKEN || !orderId) return;
+
   const getUrl = `https://${SHOPIFY_STORE}/admin/api/2024-10/orders/${orderId}.json?fields=id,tags,note_attributes`;
   const getResp = await axios.get(getUrl, {
     headers: { "X-Shopify-Access-Token": SHOPIFY_ADMIN_TOKEN },
     timeout: 20000,
   });
 
-  const order = getResp.data?.order;
-  const currentTags = String(order?.tags || "");
-  const tagsArr = currentTags.split(",").map((t) => t.trim()).filter(Boolean);
+  const ord = getResp.data?.order;
+  const currentTags = String(ord?.tags || "");
+  const tagsArr = currentTags
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
 
   if (tagToAdd && !tagsArr.includes(tagToAdd)) tagsArr.push(tagToAdd);
 
-  const note_attributes = Array.isArray(order?.note_attributes) ? order.note_attributes : [];
-  // додаємо/оновлюємо note_attributes (видно в адмінці як “Additional details”)
+  const note_attributes = Array.isArray(ord?.note_attributes) ? ord.note_attributes : [];
   const key = "np_cod_block";
   const filtered = note_attributes.filter((x) => x?.name !== key);
   filtered.push({ name: key, value: noteLine });
@@ -257,9 +277,7 @@ async function npPost(apiKey, modelName, calledMethod, methodProperties, tries =
       );
 
       const contentType = String(resp.headers?.["content-type"] || "");
-      if (contentType.includes("text/html")) {
-        throw new Error("NP returned HTML (likely 502)");
-      }
+      if (contentType.includes("text/html")) throw new Error("NP returned HTML (likely 502)");
 
       return resp.data;
     } catch (e) {
@@ -269,7 +287,6 @@ async function npPost(apiKey, modelName, calledMethod, methodProperties, tries =
       await new Promise((r) => setTimeout(r, wait));
     }
   }
-
   throw lastErr;
 }
 
@@ -293,7 +310,7 @@ async function findCityRef(rawCityName, apiKey) {
 async function findWarehouseRef(warehouseName, cityRef, apiKey) {
   const wh = String(warehouseName || "").trim();
 
-  // 1) якщо прийшов Ref/ID — пробуємо як Ref
+  // Якщо прийшов Ref — пробуємо як Ref
   if (/^[0-9a-fA-F-]{20,}$/.test(wh)) {
     console.log("📦 Пробуємо як Ref відділення:", wh);
     const data = await npPost(apiKey, "AddressGeneral", "getWarehouses", { Ref: wh });
@@ -301,7 +318,6 @@ async function findWarehouseRef(warehouseName, cityRef, apiKey) {
     if (ref) return ref;
   }
 
-  // 2) витягуємо номер відділення/поштомату
   const clean = wh
     .replace(/нова\s?пошта/gi, "")
     .replace(/nova\s?poshta/gi, "")
@@ -322,24 +338,52 @@ async function findWarehouseRef(warehouseName, cityRef, apiKey) {
   return data?.data?.[0]?.Ref || null;
 }
 
-function buildSeatsBlock() {
-  // стабільний блок під вимоги НП (OptionsSeat / Width is empty)
-  const base = {
-    VolumetricWidth: "10",
-    VolumetricHeight: "10",
-    VolumetricLength: "10",
-    Weight: "0.3",
-    Width: "10",
-    Height: "10",
-    Length: "10",
+// =======================
+// Seats block (fixed 22×15×5, 0.3kg)
+// IMPORTANT: use both numeric + string duplicates => NP validators differ per account
+// =======================
+function buildSeatsBlockFixed() {
+  const w = Number(PARCEL.widthCm);
+  const h = Number(PARCEL.heightCm);
+  const l = Number(PARCEL.lengthCm);
+  const weight = Number(PARCEL.weightKg);
+  const volume = calcVolumeM3(PARCEL); // 0.00165
+
+  const seat = {
+    Width: w,
+    Height: h,
+    Length: l,
+    Weight: weight,
+
+    VolumetricWidth: w,
+    VolumetricHeight: h,
+    VolumetricLength: l,
+
+    Volume: volume,
+    VolumetricVolume: volume,
+
+    // дубль строками
+    WidthString: String(w),
+    HeightString: String(h),
+    LengthString: String(l),
+    WeightString: String(weight),
+    VolumetricWidthString: String(w),
+    VolumetricHeightString: String(h),
+    VolumetricLengthString: String(l),
+    VolumeString: String(volume),
+    VolumetricVolumeString: String(volume),
   };
 
   return {
-    SeatsAmount: "1",
-    Seats: [base],
-    OptionsSeat: [base],
-    Weight: "0.3",
-    VolumeGeneral: "0.001",
+    SeatsAmount: 1,
+    OptionsSeat: [seat],
+    Weight: weight,
+    VolumeGeneral: volume,
+
+    // інколи допомагає (якщо валідатор дивиться саме сюди)
+    Width: w,
+    Height: h,
+    Length: l,
   };
 }
 
@@ -454,22 +498,21 @@ export async function handleNovaPoshta(req, res) {
     const paymentMethod = order?.payment_gateway_names?.[0] || "";
 
     const recipientPhone = normalizePhone(rawPhone);
-    const isCOD = isCODPayment(paymentMethod);
-    const isLocker = isParcelLocker(address1);
+    const cod = isCODPayment(paymentMethod);
+    const locker = isParcelLocker(address1);
 
     console.log("🏙️ Місто:", rawCityName);
     console.log("🏤 Address1:", address1);
     console.log("📞 Телефон:", recipientPhone);
     console.log("💰 Оплата:", paymentMethod);
-    console.log("📦 isCOD:", isCOD, "| isLocker:", isLocker);
+    console.log("📦 COD:", cod, "| LOCKER:", locker);
 
     const baseUrl = BASE_URL || `${req.protocol}://${req.get("host")}`;
 
     // ========= RULE: LOCKER + COD => NO TTN =========
-    if (isLocker && isCOD) {
+    if (locker && cod) {
       console.log("⛔ Поштомат + COD: ТТН НЕ створюємо. Створюємо payment link і позначаємо Shopify.");
 
-      // 1) create mono invoice
       let paymentUrl = null;
       let monoInvoiceId = null;
 
@@ -479,9 +522,9 @@ export async function handleNovaPoshta(req, res) {
         paymentUrl = mono?.pageUrl || null;
 
         if (monoInvoiceId && paymentUrl) {
+          saveMonoInvoice(monoInvoiceId, order, paymentUrl);
           console.log("✅ Monobank invoice:", monoInvoiceId);
           console.log("✅ Payment URL:", paymentUrl);
-          saveMonoInvoice(monoInvoiceId, order, paymentUrl);
         } else {
           console.warn("⚠️ Monobank не повернув invoiceId/pageUrl");
         }
@@ -489,9 +532,10 @@ export async function handleNovaPoshta(req, res) {
         console.error("🚨 Monobank create invoice failed:", e?.response?.data || e?.message || e);
       }
 
-      // 2) mark Shopify: tag + note + metafields
       if (SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
-        const reason = "COD недоступний для поштоматів Нової Пошти. Потрібна передоплата або доставка у відділення.";
+        const reason =
+          "COD недоступний для поштоматів Нової Пошти. Оберіть передоплату або доставку у відділення.";
+
         try {
           await shopifyTagAndNote(order.id, "cod_blocked_np_locker", reason);
 
@@ -510,11 +554,8 @@ export async function handleNovaPoshta(req, res) {
         } catch (e) {
           console.error("🚨 Shopify mark failed:", e?.response?.data || e?.message || e);
         }
-      } else {
-        console.warn("⚠️ Shopify creds missing — не можу позначити order");
       }
 
-      // 3) no TTN, return ok
       printedOrders[orderKey] = Date.now();
       fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
@@ -578,11 +619,11 @@ export async function handleNovaPoshta(req, res) {
 
     if (!CONTACT_RECIPIENT_REF) throw new Error("Не вдалося отримати CONTACT_RECIPIENT_REF");
 
-    // 3) payment link (optional) — ти можеш робити тільки для НЕ-COD, але залишив як в тебе було
-    // якщо хочеш: робимо invoice тільки коли !isCOD
+    // 3) payment link (тільки якщо НЕ COD)
     let paymentUrl = null;
     let monoInvoiceId = null;
-    if (!isCOD) {
+
+    if (!cod) {
       try {
         const mono = await createMonoInvoice(order, baseUrl);
         monoInvoiceId = mono?.invoiceId || null;
@@ -596,17 +637,20 @@ export async function handleNovaPoshta(req, res) {
       } catch (e) {
         console.error("🚨 Monobank create invoice failed:", e?.response?.data || e?.message || e);
       }
+
+      if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
+        await shopifySetMetafields(order.id, [
+          { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
+        ]);
+      }
     }
 
-    if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
-      await shopifySetMetafields(order.id, [
-        { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
-      ]);
-    }
+    // 4) Create TTN (FIXED SEATS 22×15×5, 0.3kg)
+    const afterPaymentAmount = cod ? String(order?.total_price || "0") : "0";
+    const seats = buildSeatsBlockFixed();
 
-    // 4) Create TTN
-    const afterPaymentAmount = isCOD ? String(order?.total_price || "0") : "0";
-    const seats = buildSeatsBlock();
+    // якщо знову буде помилка — це лог покаже, що ми реально відправляємо
+    console.log("🧾 NP InternetDocument.save payload seats:", JSON.stringify(seats, null, 2));
 
     const ttnRes = await npPost(process.env.NP_API_KEY, "InternetDocument", "save", {
       PayerType: "Recipient",
@@ -645,8 +689,8 @@ export async function handleNovaPoshta(req, res) {
 
     // 5) Label PDF download (retry)
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
-    let pdfResponse = null;
 
+    let pdfResponse = null;
     for (let attempt = 1; attempt <= 4; attempt++) {
       try {
         pdfResponse = await axios.get(labelUrl, { responseType: "arraybuffer", timeout: 25000 });
@@ -671,7 +715,9 @@ export async function handleNovaPoshta(req, res) {
       await shopifySetMetafields(order.id, [
         { namespace: "custom", key: "ttn_number", type: "single_line_text_field", value: String(ttnNumber) },
         { namespace: "custom", key: "ttn_label_url", type: "url", value: fullLabelUrl },
-        { namespace: "custom", key: "np_point_type", type: "single_line_text_field", value: isLocker ? "locker" : "branch" },
+        { namespace: "custom", key: "np_point_type", type: "single_line_text_field", value: locker ? "locker" : "branch" },
+        { namespace: "custom", key: "np_seat_weight", type: "number_decimal", value: String(PARCEL.weightKg) },
+        { namespace: "custom", key: "np_seat_dims_cm", type: "single_line_text_field", value: `${PARCEL.lengthCm}x${PARCEL.widthCm}x${PARCEL.heightCm}` },
       ]);
       console.log("✅ Shopify saved TTN/label:", fullLabelUrl);
     }
@@ -691,6 +737,11 @@ export async function handleNovaPoshta(req, res) {
       label_url: fullLabelUrl,
       payment_link: paymentUrl || "—",
       mono_invoice_id: monoInvoiceId || "—",
+      parcel: {
+        weightKg: PARCEL.weightKg,
+        dimsCm: [PARCEL.lengthCm, PARCEL.widthCm, PARCEL.heightCm],
+        volumeM3: calcVolumeM3(PARCEL),
+      },
     });
   } catch (err) {
     console.error("🚨 Помилка:", err?.response?.data || err?.message || err);
