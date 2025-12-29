@@ -290,21 +290,26 @@ async function npPost(apiKey, modelName, calledMethod, methodProperties, tries =
   throw lastErr;
 }
 
+// =======================
+// FIX #1: better city match (avoid Львів -> Київ)
+// =======================
 async function findCityRef(rawCityName, apiKey) {
-  const source = String(rawCityName || "Київ");
-  const q1 = source.replace(/[ʼ’`]/g, "'").trim();
-  const q2 = source.replace(/[ʼ’'`]/g, " ").replace(/\s+/g, " ").trim();
-  const q3 = source.replace(/[^A-Za-zА-Яа-яІіЇїЄєҐґ\s-]/g, " ").replace(/\s+/g, " ").trim();
+  const q = String(rawCityName || "Київ").trim();
+  const normalized = q.toLowerCase();
 
-  const queries = [q1, q2, q3].filter(Boolean);
+  console.log("🏙️ Пошук міста:", q);
+  const cityData = await npPost(apiKey, "Address", "getCities", { FindByString: q });
+  const list = Array.isArray(cityData?.data) ? cityData.data : [];
+  if (!list.length) return null;
 
-  for (const q of queries) {
-    console.log("🏙️ Пошук міста:", q);
-    const cityData = await npPost(apiKey, "Address", "getCities", { FindByString: q });
-    const ref = cityData?.data?.[0]?.Ref;
-    if (ref) return ref;
-  }
-  return null;
+  const best =
+    list.find((c) => String(c?.Description || "").toLowerCase() === normalized) ||
+    list.find((c) => String(c?.DescriptionRu || "").toLowerCase() === normalized) ||
+    list.find((c) => String(c?.Description || "").toLowerCase().includes(normalized)) ||
+    list.find((c) => String(c?.DescriptionRu || "").toLowerCase().includes(normalized)) ||
+    list[0];
+
+  return best?.Ref || null;
 }
 
 async function findWarehouseRef(warehouseName, cityRef, apiKey) {
@@ -339,52 +344,48 @@ async function findWarehouseRef(warehouseName, cityRef, apiKey) {
 }
 
 // =======================
-// Seats block (fixed 22×15×5, 0.3kg)
-// IMPORTANT: use both numeric + string duplicates => NP validators differ per account
+// FIX #2: Seats block for NP validator
+// - Use STRINGS only
+// - Try PascalCase first, then camelCase fallback if OptionsSeat rejected
 // =======================
-function buildSeatsBlockFixed() {
-  const w = Number(PARCEL.widthCm);
-  const h = Number(PARCEL.heightCm);
-  const l = Number(PARCEL.lengthCm);
-  const weight = Number(PARCEL.weightKg);
-  const volume = calcVolumeM3(PARCEL); // 0.00165
+function buildSeatsBlocksFixed() {
+  const w = String(PARCEL.widthCm); // "15"
+  const h = String(PARCEL.heightCm); // "5"
+  const l = String(PARCEL.lengthCm); // "22"
+  const weight = String(PARCEL.weightKg); // "0.3"
+  const volume = String(calcVolumeM3(PARCEL)); // "0.00165"
 
-  const seat = {
-    Width: w,
-    Height: h,
-    Length: l,
-    Weight: weight,
-
-    VolumetricWidth: w,
-    VolumetricHeight: h,
-    VolumetricLength: l,
-
-    Volume: volume,
-    VolumetricVolume: volume,
-
-    // дубль строками
-    WidthString: String(w),
-    HeightString: String(h),
-    LengthString: String(l),
-    WeightString: String(weight),
-    VolumetricWidthString: String(w),
-    VolumetricHeightString: String(h),
-    VolumetricLengthString: String(l),
-    VolumeString: String(volume),
-    VolumetricVolumeString: String(volume),
-  };
-
-  return {
-    SeatsAmount: 1,
-    OptionsSeat: [seat],
+  // Variant A (PascalCase)
+  const seatsA = {
+    SeatsAmount: "1",
     Weight: weight,
     VolumeGeneral: volume,
-
-    // інколи допомагає (якщо валідатор дивиться саме сюди)
-    Width: w,
-    Height: h,
-    Length: l,
+    OptionsSeat: [
+      {
+        VolumetricWidth: w,
+        VolumetricHeight: h,
+        VolumetricLength: l,
+        Weight: weight,
+      },
+    ],
   };
+
+  // Variant B (camelCase) – some NP accounts accept only this
+  const seatsB = {
+    SeatsAmount: "1",
+    Weight: weight,
+    VolumeGeneral: volume,
+    OptionsSeat: [
+      {
+        volumetricWidth: w,
+        volumetricHeight: h,
+        volumetricLength: l,
+        weight: weight,
+      },
+    ],
+  };
+
+  return { seatsA, seatsB };
 }
 
 // =======================
@@ -645,20 +646,15 @@ export async function handleNovaPoshta(req, res) {
       }
     }
 
-    // 4) Create TTN (FIXED SEATS 22×15×5, 0.3kg)
+    // 4) Create TTN (Seats FIX with fallback)
     const afterPaymentAmount = cod ? String(order?.total_price || "0") : "0";
-    const seats = buildSeatsBlockFixed();
+    const { seatsA, seatsB } = buildSeatsBlocksFixed();
 
-    // якщо знову буде помилка — це лог покаже, що ми реально відправляємо
-    console.log("🧾 NP InternetDocument.save payload seats:", JSON.stringify(seats, null, 2));
-
-    const ttnRes = await npPost(process.env.NP_API_KEY, "InternetDocument", "save", {
+    const baseProps = {
       PayerType: "Recipient",
       PaymentMethod: "Cash",
       CargoType: "Parcel",
       ServiceType: "WarehouseWarehouse",
-
-      ...seats,
 
       Cost: String(order?.total_price || "0"),
       Description: buildShortDescription(order),
@@ -676,7 +672,27 @@ export async function handleNovaPoshta(req, res) {
       RecipientsPhone: recipientPhone,
 
       AfterpaymentOnGoodsCost: afterPaymentAmount,
+    };
+
+    console.log("🧾 NP seatsA:", JSON.stringify(seatsA, null, 2));
+
+    let ttnRes = await npPost(process.env.NP_API_KEY, "InternetDocument", "save", {
+      ...baseProps,
+      ...seatsA,
     });
+
+    if (!ttnRes?.success) {
+      const errText = String((ttnRes?.errors || []).join(", "));
+      if (/OptionsSeat is empty/i.test(errText)) {
+        console.warn("⚠️ OptionsSeat rejected in A-format, retry with B-format...");
+        console.log("🧾 NP seatsB:", JSON.stringify(seatsB, null, 2));
+
+        ttnRes = await npPost(process.env.NP_API_KEY, "InternetDocument", "save", {
+          ...baseProps,
+          ...seatsB,
+        });
+      }
+    }
 
     if (!ttnRes?.success) {
       throw new Error(`Не вдалося створити ТТН: ${(ttnRes?.errors || []).join(", ")}`);
@@ -710,7 +726,7 @@ export async function handleNovaPoshta(req, res) {
     const publicUrlPath = `/labels/label-${ttnNumber}.pdf`;
     const fullLabelUrl = `${baseUrl}${publicUrlPath}`;
 
-    // 6) Shopify save TTN + label url
+    // 6) Shopify save TTN + label url + parcel meta
     if (SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
       await shopifySetMetafields(order.id, [
         { namespace: "custom", key: "ttn_number", type: "single_line_text_field", value: String(ttnNumber) },
@@ -718,6 +734,7 @@ export async function handleNovaPoshta(req, res) {
         { namespace: "custom", key: "np_point_type", type: "single_line_text_field", value: locker ? "locker" : "branch" },
         { namespace: "custom", key: "np_seat_weight", type: "number_decimal", value: String(PARCEL.weightKg) },
         { namespace: "custom", key: "np_seat_dims_cm", type: "single_line_text_field", value: `${PARCEL.lengthCm}x${PARCEL.widthCm}x${PARCEL.heightCm}` },
+        { namespace: "custom", key: "np_seat_volume_m3", type: "number_decimal", value: String(calcVolumeM3(PARCEL)) },
       ]);
       console.log("✅ Shopify saved TTN/label:", fullLabelUrl);
     }
