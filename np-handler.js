@@ -168,19 +168,73 @@ function isParcelLocker(address1) {
 }
 
 // =======================
-// FIX #A: extract NP point number from address1 correctly
-// "Тарнавського 7 4244" -> 4244 (NOT 7)
+// FIX: extract NP point number reliably
+// Handles:
+// - "Тарнавського 7 4244" -> 4244
+// - 'Поштомат "Нова Пошта" №35205: ... біля відділення №150' -> 35205 (NOT 150)
 // =======================
 function extractNpPointNumber(raw) {
   const s = String(raw || "");
+
+  const explicit =
+    s.match(/поштомат[^0-9]{0,30}№\s*(\d{3,6})/i)?.[1] ||
+    s.match(/відділення[^0-9]{0,30}№\s*(\d{1,6})/i)?.[1] ||
+    s.match(/№\s*(\d{3,6})/)?.[1];
+
+  if (explicit) return explicit;
+
   const nums = s.match(/\d{1,6}/g) || [];
   if (!nums.length) return null;
 
-  // prefer last number with length >= 3 (most NP numbers are 3-6 digits)
+  // prefer last number with length >= 3
   for (let i = nums.length - 1; i >= 0; i--) {
     if (nums[i].length >= 3) return nums[i];
   }
   return nums[nums.length - 1];
+}
+
+// =======================
+// City normalization for NP getCities
+// Handles:
+// "місто Київ (Київська область)" -> "Київ"
+// =======================
+function normCity(s) {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[ʼ’`]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeCityCandidates(raw) {
+  const original = String(raw || "").trim();
+  if (!original) return ["Київ"];
+
+  // If contains Kyiv/Київ -> hard prefer Kyiv
+  if (/(^|\s)(київ|kyiv)(\s|$)/i.test(original)) {
+    return ["Київ", "Kyiv", original].filter(Boolean);
+  }
+
+  let s = original;
+  s = s.replace(/[“”"]/g, "");
+  s = s.replace(/$begin:math:text$\.\*\?$end:math:text$/g, " "); // remove parentheses
+  s = s.replace(/\s+/g, " ").trim();
+
+  s = s
+    .replace(/^(місто|м\.|город)\s+/i, "")
+    .replace(/^(с\.|село|смт|селище|пгт)\s+/i, "")
+    .replace(/\b(область|обл\.|район|р-н|громада)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const firstPart = s.split(",")[0]?.trim();
+  const firstWord = s.split(" ")[0]?.trim();
+
+  const candidates = [s, firstPart, firstWord, original]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+
+  return [...new Set(candidates)];
 }
 
 // =======================
@@ -204,13 +258,7 @@ async function shopifyPutOrder(orderId, payload) {
 }
 
 async function shopifySetMetafields(orderId, metafields) {
-  if (
-    !SHOPIFY_STORE ||
-    !SHOPIFY_ADMIN_TOKEN ||
-    !orderId ||
-    !Array.isArray(metafields) ||
-    metafields.length === 0
-  ) {
+  if (!SHOPIFY_STORE || !SHOPIFY_ADMIN_TOKEN || !orderId || !Array.isArray(metafields) || metafields.length === 0) {
     return;
   }
 
@@ -259,10 +307,7 @@ async function shopifyTagAndNote(orderId, tagToAdd, noteLine) {
 
   const ord = getResp.data?.order;
   const currentTags = String(ord?.tags || "");
-  const tagsArr = currentTags
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
+  const tagsArr = currentTags.split(",").map((t) => t.trim()).filter(Boolean);
 
   if (tagToAdd && !tagsArr.includes(tagToAdd)) tagsArr.push(tagToAdd);
 
@@ -289,7 +334,7 @@ async function npPost(apiKey, modelName, calledMethod, methodProperties, tries =
       const resp = await axios.post(
         url,
         { apiKey, modelName, calledMethod, methodProperties },
-        { timeout: 20000 }
+        { timeout: 25000 }
       );
 
       const contentType = String(resp.headers?.["content-type"] || "");
@@ -307,46 +352,46 @@ async function npPost(apiKey, modelName, calledMethod, methodProperties, tries =
 }
 
 // =======================
-// FIX #1: better city match (avoid Львів -> Київ)
+// CityRef (robust)
 // =======================
-function normCity(s) {
-  return String(s || "")
-    .toLowerCase()
-    .replace(/[ʼ’`]/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 async function findCityRef(rawCityName, apiKey) {
-  const qRaw = String(rawCityName || "Київ").trim();
-  const q = normCity(qRaw);
+  const candidates = normalizeCityCandidates(rawCityName);
 
-  console.log("🏙️ Пошук міста:", qRaw);
-  const cityData = await npPost(apiKey, "Address", "getCities", { FindByString: qRaw });
-  const list = Array.isArray(cityData?.data) ? cityData.data : [];
-  if (!list.length) return null;
+  for (const qRaw of candidates) {
+    console.log("🏙️ Пошук міста:", qRaw);
 
-  const exact =
-    list.find((c) => normCity(c?.Description) === q) ||
-    list.find((c) => normCity(c?.DescriptionRu) === q);
+    const cityData = await npPost(apiKey, "Address", "getCities", { FindByString: qRaw });
+    const list = Array.isArray(cityData?.data) ? cityData.data : [];
+    if (!list.length) continue;
 
-  if (exact?.Ref) return exact.Ref;
+    const q = normCity(qRaw);
 
-  const starts =
-    list.find((c) => normCity(c?.Description).startsWith(q)) ||
-    list.find((c) => normCity(c?.DescriptionRu).startsWith(q));
+    const exact =
+      list.find((c) => normCity(c?.Description) === q) ||
+      list.find((c) => normCity(c?.DescriptionRu) === q);
 
-  if (starts?.Ref) return starts.Ref;
+    if (exact?.Ref) return exact.Ref;
 
-  const contains =
-    list.find((c) => normCity(c?.Description).includes(q)) ||
-    list.find((c) => normCity(c?.DescriptionRu).includes(q));
+    const starts =
+      list.find((c) => normCity(c?.Description).startsWith(q)) ||
+      list.find((c) => normCity(c?.DescriptionRu).startsWith(q));
 
-  return (contains?.Ref || list[0]?.Ref || null);
+    if (starts?.Ref) return starts.Ref;
+
+    const contains =
+      list.find((c) => normCity(c?.Description).includes(q)) ||
+      list.find((c) => normCity(c?.DescriptionRu).includes(q));
+
+    if (contains?.Ref) return contains.Ref;
+
+    if (list[0]?.Ref) return list[0].Ref;
+  }
+
+  return null;
 }
 
 // =======================
-// FIX #A: warehouse search using extracted number + exact match by Number
+// WarehouseRef (uses extracted number + exact match by Number)
 // =======================
 async function findWarehouseRef(warehouseName, cityRef, apiKey) {
   const wh = String(warehouseName || "").trim();
@@ -365,18 +410,18 @@ async function findWarehouseRef(warehouseName, cityRef, apiKey) {
   const data = await npPost(apiKey, "AddressGeneral", "getWarehouses", {
     CityRef: cityRef,
     FindByString: String(num),
-    Limit: "20",
+    Limit: "50",
   });
 
   const list = Array.isArray(data?.data) ? data.data : [];
   if (!list.length) return null;
 
   const exact = list.find((w) => String(w?.Number || "") === String(num));
-  return (exact?.Ref || list[0]?.Ref || null);
+  return exact?.Ref || list[0]?.Ref || null;
 }
 
 // =======================
-// FIX #2: Seats block for NP validator
+// Seats block for NP validator
 // - Use STRINGS only
 // - Try PascalCase first, then camelCase fallback if OptionsSeat rejected
 // =======================
@@ -387,7 +432,6 @@ function buildSeatsBlocksFixed() {
   const weight = String(PARCEL.weightKg); // "0.3"
   const volume = String(calcVolumeM3(PARCEL)); // "0.00165"
 
-  // Variant A (PascalCase)
   const seatsA = {
     SeatsAmount: "1",
     Weight: weight,
@@ -402,7 +446,6 @@ function buildSeatsBlocksFixed() {
     ],
   };
 
-  // Variant B (camelCase)
   const seatsB = {
     SeatsAmount: "1",
     Weight: weight,
@@ -533,14 +576,16 @@ export async function handleNovaPoshta(req, res) {
     const recipientPhone = normalizePhone(rawPhone);
     const cod = isCODPayment(paymentMethod);
     const locker = isParcelLocker(address1);
+    const npPointNumber = extractNpPointNumber(address1);
 
     console.log("🏙️ Місто:", rawCityName);
     console.log("🏤 Address1:", address1);
+    console.log("📍 NP point number:", npPointNumber || "—");
     console.log("📞 Телефон:", recipientPhone);
     console.log("💰 Оплата:", paymentMethod);
     console.log("📦 COD:", cod, "| LOCKER:", locker);
 
-    // IMPORTANT: prefer BASE_URL for public links
+    // IMPORTANT: prefer BASE_URL for public links (Render)
     const baseUrl = BASE_URL || `https://${req.get("host")}`;
 
     // ========= RULE: LOCKER + COD => NO TTN =========
@@ -575,18 +620,14 @@ export async function handleNovaPoshta(req, res) {
 
           const mfs = [
             { namespace: "custom", key: "np_point_type", type: "single_line_text_field", value: "locker" },
+            { namespace: "custom", key: "np_point_number", type: "single_line_text_field", value: String(npPointNumber || "") },
             { namespace: "custom", key: "cod_blocked", type: "boolean", value: "true" },
             { namespace: "custom", key: "cod_block_reason", type: "single_line_text_field", value: reason.slice(0, 255) },
           ];
 
           if (paymentUrl) {
             mfs.push({ namespace: "custom", key: "payment_link", type: "url", value: paymentUrl });
-            mfs.push({
-              namespace: "custom",
-              key: "mono_invoice_id",
-              type: "single_line_text_field",
-              value: String(monoInvoiceId || ""),
-            });
+            mfs.push({ namespace: "custom", key: "mono_invoice_id", type: "single_line_text_field", value: String(monoInvoiceId || "") });
           }
 
           await shopifySetMetafields(order.id, mfs);
@@ -603,8 +644,7 @@ export async function handleNovaPoshta(req, res) {
         ok: true,
         blocked: true,
         reason: "locker_cod_not_allowed",
-        message:
-          "⛔ Поштомат + COD: ТТН не створено. Створено payment link / order помічено в Shopify.",
+        message: "⛔ Поштомат + COD: ТТН не створено. Створено payment link / order помічено в Shopify.",
         order_id: orderKey,
         payment_link: paymentUrl || "—",
         mono_invoice_id: monoInvoiceId || "—",
@@ -660,9 +700,7 @@ export async function handleNovaPoshta(req, res) {
 
     if (!CONTACT_RECIPIENT_REF) throw new Error("Не вдалося отримати CONTACT_RECIPIENT_REF");
 
-    // 3) payment link
-    // правило: створюємо тільки якщо НЕ COD (як було), але:
-    // якщо створили — записуємо в Shopify гарантовано
+    // 3) payment link (тільки якщо НЕ COD)
     let paymentUrl = null;
     let monoInvoiceId = null;
 
@@ -676,13 +714,15 @@ export async function handleNovaPoshta(req, res) {
           saveMonoInvoice(monoInvoiceId, order, paymentUrl);
           console.log("✅ Monobank invoice:", monoInvoiceId);
           console.log("✅ Payment URL:", paymentUrl);
+        } else {
+          console.warn("⚠️ Monobank не повернув invoiceId/pageUrl");
         }
       } catch (e) {
         console.error("🚨 Monobank create invoice failed:", e?.response?.data || e?.message || e);
       }
     }
 
-    // IMPORTANT: write payment link when it exists (even if later you change invoice rules)
+    // Always push payment link to Shopify if exists
     if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
       await shopifySetMetafields(order.id, [
         { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
@@ -748,23 +788,36 @@ export async function handleNovaPoshta(req, res) {
 
     console.log("✅ ТТН створено:", ttnNumber);
 
-    // 5) Label PDF download (retry)
+    // 5) Label PDF download (retry + validation that it is a PDF)
     const labelUrl = `https://my.novaposhta.ua/orders/printMarking100x100/orders[]/${ttnNumber}/type/pdf/apiKey/${process.env.NP_API_KEY}/zebra`;
 
     let pdfResponse = null;
-    for (let attempt = 1; attempt <= 4; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       try {
         pdfResponse = await axios.get(labelUrl, {
           responseType: "arraybuffer",
-          timeout: 30000,
+          timeout: 35000,
           maxContentLength: Infinity,
           maxBodyLength: Infinity,
           headers: { Accept: "application/pdf" },
+          validateStatus: (s) => s >= 200 && s < 300,
         });
+
+        const ct = String(pdfResponse?.headers?.["content-type"] || "");
+        const buf = Buffer.from(pdfResponse.data || []);
+
+        // ensure it looks like a PDF
+        const header = buf.slice(0, 4).toString("utf8");
+        const isPdf = ct.includes("pdf") || header === "%PDF";
+
+        if (!isPdf) {
+          throw new Error(`NP label is not PDF (content-type: ${ct || "unknown"}, head: ${header || "----"})`);
+        }
+
         break;
       } catch (e) {
-        console.warn(`⚠️ Label retry ${attempt}/4:`, e?.message || e);
-        await new Promise((r) => setTimeout(r, 450 * attempt * attempt));
+        console.warn(`⚠️ Label retry ${attempt}/5:`, e?.message || e);
+        await new Promise((r) => setTimeout(r, 500 * attempt * attempt));
       }
     }
 
@@ -783,7 +836,7 @@ export async function handleNovaPoshta(req, res) {
         { namespace: "custom", key: "ttn_number", type: "single_line_text_field", value: String(ttnNumber) },
         { namespace: "custom", key: "ttn_label_url", type: "url", value: fullLabelUrl },
         { namespace: "custom", key: "np_point_type", type: "single_line_text_field", value: locker ? "locker" : "branch" },
-        { namespace: "custom", key: "np_point_number", type: "single_line_text_field", value: String(extractNpPointNumber(address1) || "") },
+        { namespace: "custom", key: "np_point_number", type: "single_line_text_field", value: String(npPointNumber || "") },
         { namespace: "custom", key: "np_seat_weight", type: "number_decimal", value: String(PARCEL.weightKg) },
         { namespace: "custom", key: "np_seat_dims_cm", type: "single_line_text_field", value: `${PARCEL.lengthCm}x${PARCEL.widthCm}x${PARCEL.heightCm}` },
         { namespace: "custom", key: "np_seat_volume_m3", type: "number_decimal", value: String(calcVolumeM3(PARCEL)) },
