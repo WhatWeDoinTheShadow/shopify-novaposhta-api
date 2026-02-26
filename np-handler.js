@@ -31,7 +31,6 @@ function saveMonoInvoice(invoiceId, order, paymentUrl) {
 }
 
 
-console.log("NP ACCOUNTS:", JSON.stringify(accounts, null, 2));
 // =======================
 // Labels + printed orders
 // =======================
