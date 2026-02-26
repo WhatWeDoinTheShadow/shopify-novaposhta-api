@@ -29,7 +29,16 @@ function saveMonoInvoice(invoiceId, order, paymentUrl) {
   };
   fs.writeFileSync(MONO_DB, JSON.stringify(monoInvoices, null, 2));
 }
+const accounts = await npPost(
+  process.env.NP_API_KEY,
+  "CounterpartyGeneral",
+  "getCounterpartyAccounts",
+  {
+    CounterpartyRef: SENDER_REF
+  }
+);
 
+console.log("NP ACCOUNTS:", JSON.stringify(accounts, null, 2));
 // =======================
 // Labels + printed orders
 // =======================
