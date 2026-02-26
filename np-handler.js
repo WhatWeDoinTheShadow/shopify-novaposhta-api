@@ -29,14 +29,7 @@ function saveMonoInvoice(invoiceId, order, paymentUrl) {
   };
   fs.writeFileSync(MONO_DB, JSON.stringify(monoInvoices, null, 2));
 }
-const accounts = await npPost(
-  process.env.NP_API_KEY,
-  "CounterpartyGeneral",
-  "getCounterpartyAccounts",
-  {
-    CounterpartyRef: SENDER_REF
-  }
-);
+
 
 console.log("NP ACCOUNTS:", JSON.stringify(accounts, null, 2));
 // =======================
@@ -568,11 +561,11 @@ export async function handleNovaPoshta(req, res) {
 
   try {
     // sender refs
-    const SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626";
-    const SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d";
-    const SENDER_REF = "6bcb6d88-16de-11ef-bcd0-48df37b921da";
-    const CONTACT_SENDER_REF = "f8caa074-1740-11ef-bcd0-48df37b921da";
-    const SENDERS_PHONE = "380932532432";
+   const SENDER_CITY_REF = process.env.NP_SENDER_CITY_REF;
+const SENDER_ADDRESS_REF = process.env.NP_SENDER_ADDRESS_REF;
+const SENDER_REF = process.env.NP_SENDER_REF;
+const CONTACT_SENDER_REF = process.env.NP_CONTACT_SENDER_REF;
+const SENDERS_PHONE = process.env.NP_SENDERS_PHONE;
 
     // Shopify data
     const rawCityName = order?.shipping_address?.city || "Київ";
