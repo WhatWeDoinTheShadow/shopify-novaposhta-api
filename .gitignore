@@ -1,0 +1,10 @@
+node_modules
+labels
+*.log
+*.tmp
+*.env
+*.env.*
+!.env.example
+*.pdf
+mono_invoices.json
+printed_orders.json

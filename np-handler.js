@@ -52,6 +52,116 @@ const PARCEL = {
   heightCm: 5,
 };
 
+// =======================
+// Sender refs cache (to avoid repeating NP lookups)
+// =======================
+let cachedSenderRefs = null;
+
+function normalizeSenderPhone(raw) {
+  let p = String(raw || "").replace(/\D/g, "");
+  if (p.startsWith("0")) p = "38" + p;
+  if (p.startsWith("80")) p = "3" + p;
+  if (!p.startsWith("380")) p = "380" + p.replace(/^(\+)?(38)?/, "");
+  if (p.length > 12) p = p.slice(0, 12);
+
+  if (!/^380\d{9}$/.test(p)) {
+    throw new Error(`NP_SENDERS_PHONE has invalid format: ${raw}`);
+  }
+  return p;
+}
+
+function getSenderRefsFromEnv() {
+  if (cachedSenderRefs) return cachedSenderRefs;
+
+  const required = {
+    NP_SENDER_CITY_REF: process.env.NP_SENDER_CITY_REF,
+    NP_SENDER_ADDRESS_REF: process.env.NP_SENDER_ADDRESS_REF,
+    NP_SENDER_REF: process.env.NP_SENDER_REF,
+    NP_CONTACT_SENDER_REF: process.env.NP_CONTACT_SENDER_REF,
+    NP_SENDERS_PHONE: process.env.NP_SENDERS_PHONE,
+  };
+
+  const missing = Object.entries(required)
+    .filter(([, v]) => !v)
+    .map(([k]) => k);
+
+  if (missing.length) {
+    // If env is incomplete — try to auto-fetch from NP cabinet
+    return null;
+  }
+
+  const normalizedPhone = normalizeSenderPhone(required.NP_SENDERS_PHONE);
+
+  cachedSenderRefs = {
+    SENDER_CITY_REF: required.NP_SENDER_CITY_REF,
+    SENDER_ADDRESS_REF: required.NP_SENDER_ADDRESS_REF,
+    SENDER_REF: required.NP_SENDER_REF,
+    CONTACT_SENDER_REF: required.NP_CONTACT_SENDER_REF,
+    SENDERS_PHONE: normalizedPhone,
+  };
+
+  console.log("🏢 Sender refs loaded (env):", {
+    City: cachedSenderRefs.SENDER_CITY_REF,
+    Address: cachedSenderRefs.SENDER_ADDRESS_REF,
+    Sender: cachedSenderRefs.SENDER_REF,
+    Contact: cachedSenderRefs.CONTACT_SENDER_REF,
+    Phone: `${cachedSenderRefs.SENDERS_PHONE.slice(0, 5)}***`,
+  });
+
+  return cachedSenderRefs;
+}
+
+// =======================
+// Sender refs auto-fetch (fallback if env is not filled)
+// =======================
+async function fetchSenderRefsFromNP(apiKey) {
+  // 1) Sender (Counterparty)
+  const cp = await npPost(apiKey, "Counterparty", "getCounterparties", {
+    CounterpartyProperty: "Sender",
+    Page: "1",
+  });
+  const sender = cp?.data?.[0];
+  if (!sender?.Ref) throw new Error("Не знайдено Sender Counterparty у акаунті НП");
+
+  // 2) Contact person
+  const contacts = await npPost(apiKey, "ContactPerson", "getContactPersons", {
+    CounterpartyRef: sender.Ref,
+  });
+  const contact = contacts?.data?.[0];
+  if (!contact?.Ref) throw new Error("Не знайдено ContactSender у акаунті НП");
+
+  // 3) Sender addresses (official endpoint)
+  const addrs = await npPost(apiKey, "Counterparty", "getCounterpartyAddresses", {
+    CounterpartyRef: sender.Ref,
+    Page: "1",
+  });
+  const addr = addrs?.data?.find((a) => a?.AddressRef) || addrs?.data?.[0];
+  if (!addr?.AddressRef || !addr?.CityRef) {
+    throw new Error("Не вдалося отримати AddressRef/CityRef відправника з НП");
+  }
+
+  const phoneFromContact = contact?.Phones?.split(",")?.[0] || contact?.Phone || sender?.Phone || "";
+  const normalizedPhone = normalizeSenderPhone(phoneFromContact);
+
+  cachedSenderRefs = {
+    SENDER_CITY_REF: addr.CityRef,
+    SENDER_ADDRESS_REF: addr.AddressRef,
+    SENDER_REF: sender.Ref,
+    CONTACT_SENDER_REF: contact.Ref,
+    SENDERS_PHONE: normalizedPhone,
+  };
+
+  console.log("🏢 Sender refs auto-fetched з НП:", {
+    City: cachedSenderRefs.SENDER_CITY_REF,
+    Address: cachedSenderRefs.SENDER_ADDRESS_REF,
+    Sender: cachedSenderRefs.SENDER_REF,
+    Contact: cachedSenderRefs.CONTACT_SENDER_REF,
+    Phone: `${normalizedPhone.slice(0, 5)}***`,
+  });
+
+  return cachedSenderRefs;
+}
+
 // m³: (cm³)/1e6
 function calcVolumeM3({ lengthCm, widthCm, heightCm }) {
   const v = (Number(lengthCm) * Number(widthCm) * Number(heightCm)) / 1_000_000;
@@ -559,12 +669,20 @@ export async function handleNovaPoshta(req, res) {
   }
 
   try {
-    // sender refs
-   const SENDER_CITY_REF = process.env.NP_SENDER_CITY_REF;
-const SENDER_ADDRESS_REF = process.env.NP_SENDER_ADDRESS_REF;
-const SENDER_REF = process.env.NP_SENDER_REF;
-const CONTACT_SENDER_REF = process.env.NP_CONTACT_SENDER_REF;
-const SENDERS_PHONE = process.env.NP_SENDERS_PHONE;
+    // sender refs (validated + cached). If env is missing — auto-fetch from NP
+    let senderRefs = getSenderRefsFromEnv();
+    if (!senderRefs) {
+      console.log("ℹ️ Env неповний, пробую підтягнути відправника з НП автоматично...");
+      senderRefs = await fetchSenderRefsFromNP(process.env.NP_API_KEY);
+    }
+    const { SENDER_CITY_REF, SENDER_ADDRESS_REF, SENDER_REF, CONTACT_SENDER_REF, SENDERS_PHONE } = senderRefs;
+    console.log("🏢 Sender refs in use:", {
+      City: SENDER_CITY_REF,
+      Address: SENDER_ADDRESS_REF,
+      Sender: SENDER_REF,
+      Contact: CONTACT_SENDER_REF,
+      Phone: SENDERS_PHONE,
+    });
 
     // Shopify data
     const rawCityName = order?.shipping_address?.city || "Київ";
@@ -760,6 +878,14 @@ const SENDERS_PHONE = process.env.NP_SENDERS_PHONE;
       AfterpaymentOnGoodsCost: afterPaymentAmount,
     };
 
+    console.log("📦 NP base props (sanitized):", {
+      ...baseProps,
+      // mask phones a bit
+      SendersPhone: `${String(baseProps.SendersPhone || "").slice(0, 5)}***`,
+      RecipientsPhone: `${String(baseProps.RecipientsPhone || "").slice(0, 5)}***`,
+      Description: baseProps.Description,
+    });
+
     console.log("🧾 NP seatsA:", JSON.stringify(seatsA, null, 2));
 
     let ttnRes = await npPost(process.env.NP_API_KEY, "InternetDocument", "save", {
@@ -867,7 +993,14 @@ const SENDERS_PHONE = process.env.NP_SENDERS_PHONE;
       },
     });
   } catch (err) {
-    console.error("🚨 Помилка:", err?.response?.data || err?.message || err);
-    return res.status(500).json({ ok: false, error: err?.message || "Internal error" });
+    const npErrors = err?.response?.data?.errors;
+    const msg = err?.message || "Internal error";
+    console.error("🚨 Помилка:", err?.response?.data || msg);
+
+    return res.status(500).json({
+      ok: false,
+      error: msg,
+      np_errors: npErrors || [],
+    });
   }
 }
