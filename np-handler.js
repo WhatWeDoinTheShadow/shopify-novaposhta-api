@@ -127,8 +127,7 @@ async function fetchSenderRefsFromNP(apiKey) {
   const contacts = await npPost(apiKey, "ContactPerson", "getContactPersons", {
     CounterpartyRef: sender.Ref,
   });
-  const contact = contacts?.data?.[0];
-  if (!contact?.Ref) throw new Error("Не знайдено ContactSender у акаунті НП");
+  let contact = contacts?.data?.[0] || null;
 
   // 3) Sender addresses (official endpoint)
   const addrs = await npPost(apiKey, "Counterparty", "getCounterpartyAddresses", {
@@ -140,8 +139,27 @@ async function fetchSenderRefsFromNP(apiKey) {
     throw new Error("Не вдалося отримати AddressRef/CityRef відправника з НП");
   }
 
-  const phoneFromContact = contact?.Phones?.split(",")?.[0] || contact?.Phone || sender?.Phone || "";
-  const normalizedPhone = normalizeSenderPhone(phoneFromContact);
+  let phoneFromContact = contact?.Phones?.split(",")?.[0] || contact?.Phone || sender?.Phone || "";
+  let normalizedPhone = null;
+  try {
+    normalizedPhone = normalizeSenderPhone(phoneFromContact);
+  } catch (e) {
+    console.warn("⚠️ Phone у акаунті НП відсутній або некоректний, ставлю дефолтний 380501112233");
+    normalizedPhone = "380501112233";
+  }
+
+  // 2b) Якщо контакта немає — створюємо
+  if (!contact?.Ref) {
+    const created = await npPost(apiKey, "ContactPerson", "save", {
+      CounterpartyRef: sender.Ref,
+      FirstName: sender?.FirstName || "Shopify",
+      LastName: sender?.LastName || sender?.Description || "Sender",
+      Phone: normalizedPhone,
+    });
+    contact = created?.data?.[0] || null;
+  }
+
+  if (!contact?.Ref) throw new Error("Не знайдено/створено ContactSender у акаунті НП");
 
   cachedSenderRefs = {
     SENDER_CITY_REF: addr.CityRef,
