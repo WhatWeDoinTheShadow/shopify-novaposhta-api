@@ -134,8 +134,13 @@ async function fetchSenderRefsFromNP(apiKey) {
     CounterpartyRef: sender.Ref,
     Page: "1",
   });
-  const addr = addrs?.data?.find((a) => a?.AddressRef) || addrs?.data?.[0];
-  if (!addr?.AddressRef || !addr?.CityRef) {
+  const addr = addrs?.data?.find((a) => a?.AddressRef || a?.Ref) || addrs?.data?.[0];
+
+  const addressRef = addr?.AddressRef || addr?.Ref || null;
+  // NP іноді повертає CityRef або SettlementRef
+  const cityRef = addr?.CityRef || addr?.SettlementRef || sender?.CityRef || sender?.City || null;
+
+  if (!addressRef || !cityRef) {
     throw new Error("Не вдалося отримати AddressRef/CityRef відправника з НП");
   }
 
@@ -162,8 +167,8 @@ async function fetchSenderRefsFromNP(apiKey) {
   if (!contact?.Ref) throw new Error("Не знайдено/створено ContactSender у акаунті НП");
 
   cachedSenderRefs = {
-    SENDER_CITY_REF: addr.CityRef,
-    SENDER_ADDRESS_REF: addr.AddressRef,
+    SENDER_CITY_REF: cityRef,
+    SENDER_ADDRESS_REF: addressRef,
     SENDER_REF: sender.Ref,
     CONTACT_SENDER_REF: contact.Ref,
     SENDERS_PHONE: normalizedPhone,
