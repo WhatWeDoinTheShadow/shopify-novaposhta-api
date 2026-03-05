@@ -136,9 +136,46 @@ async function fetchSenderRefsFromNP(apiKey) {
   });
   const addr = addrs?.data?.find((a) => a?.AddressRef || a?.Ref) || addrs?.data?.[0];
 
-  const addressRef = addr?.AddressRef || addr?.Ref || null;
+  console.log("🏢 NP addresses (first):", addr);
+
+  let addressRef = addr?.AddressRef || addr?.Ref || null;
   // NP іноді повертає CityRef або SettlementRef
-  const cityRef = addr?.CityRef || addr?.SettlementRef || sender?.CityRef || sender?.City || null;
+  let cityRef = addr?.CityRef || addr?.SettlementRef || sender?.CityRef || sender?.City || null;
+
+  // If CityRef still missing — try derive from present/description
+  if (!cityRef) {
+    const cityGuess =
+      addr?.CityDescription ||
+      addr?.Present ||
+      sender?.CityDescription ||
+      sender?.Description ||
+      sender?.OwnerName ||
+      "";
+    if (cityGuess) {
+      try {
+        const derived = await findCityRef(cityGuess, apiKey);
+        if (derived) cityRef = derived;
+      } catch (e) {
+        console.warn("⚠️ Не вдалося деривувати CityRef із опису:", cityGuess, e?.message || e);
+      }
+    }
+  }
+
+  // If addressRef missing but cityRef exists — pick first warehouse in city
+  if (!addressRef && cityRef) {
+    try {
+      const whs = await npPost(apiKey, "AddressGeneral", "getWarehouses", {
+        CityRef: cityRef,
+        Limit: "1",
+      });
+      addressRef = whs?.data?.[0]?.Ref || null;
+      if (addressRef) {
+        console.log("🏤 Sender AddressRef авто-взято з першого складу міста:", addressRef);
+      }
+    } catch (e) {
+      console.warn("⚠️ Не вдалося отримати склад для відправника:", e?.message || e);
+    }
+  }
 
   if (!addressRef || !cityRef) {
     throw new Error("Не вдалося отримати AddressRef/CityRef відправника з НП");
