@@ -130,23 +130,27 @@ async function fetchSenderRefsFromNP(apiKey) {
   let contact = contacts?.data?.[0] || null;
 
   // 3) Sender addresses (official endpoint)
-  const addrs = await npPost(apiKey, "Counterparty", "getCounterpartyAddresses", {
-    CounterpartyRef: sender.Ref,
-    Page: "1",
-  });
-  const addr = addrs?.data?.find((a) => a?.AddressRef || a?.Ref) || addrs?.data?.[0];
+  let addressRef = null;
+  let cityRef = null;
 
-  console.log("🏢 NP addresses (first):", addr);
+  try {
+    const addrs = await npPost(apiKey, "Counterparty", "getCounterpartyAddresses", {
+      CounterpartyRef: sender.Ref,
+      Page: "1",
+    });
+    const addr = addrs?.data?.find((a) => a?.AddressRef || a?.Ref) || addrs?.data?.[0];
+    console.log("🏢 NP addresses (first):", addr);
+    addressRef = addr?.AddressRef || addr?.Ref || null;
+    cityRef = addr?.CityRef || addr?.SettlementRef || sender?.CityRef || sender?.City || null;
+  } catch (e) {
+    console.warn("⚠️ getCounterpartyAddresses failed:", e?.message || e);
+  }
 
-  let addressRef = addr?.AddressRef || addr?.Ref || null;
-  // NP іноді повертає CityRef або SettlementRef
-  let cityRef = addr?.CityRef || addr?.SettlementRef || sender?.CityRef || sender?.City || null;
-
-  // If CityRef still missing — try derive from present/description
+  // Derive CityRef if missing — prefer explicit env hint
   if (!cityRef) {
+    const envCity = process.env.NP_SENDER_CITY_NAME;
     const cityGuess =
-      addr?.CityDescription ||
-      addr?.Present ||
+      envCity ||
       sender?.CityDescription ||
       sender?.Description ||
       sender?.OwnerName ||
@@ -161,16 +165,15 @@ async function fetchSenderRefsFromNP(apiKey) {
     }
   }
 
-  // If addressRef missing but cityRef exists — pick first warehouse in city
+  // If addressRef missing but cityRef exists — use warehouse number hint or first warehouse
   if (!addressRef && cityRef) {
+    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || "1";
+    const whName = `Відділення №${whNum}`;
     try {
-      const whs = await npPost(apiKey, "AddressGeneral", "getWarehouses", {
-        CityRef: cityRef,
-        Limit: "1",
-      });
-      addressRef = whs?.data?.[0]?.Ref || null;
-      if (addressRef) {
-        console.log("🏤 Sender AddressRef авто-взято з першого складу міста:", addressRef);
+      const ref = await findWarehouseRef(whName, cityRef, apiKey);
+      if (ref) {
+        addressRef = ref;
+        console.log("🏤 Sender AddressRef авто-взято за номером складу:", whNum, ref);
       }
     } catch (e) {
       console.warn("⚠️ Не вдалося отримати склад для відправника:", e?.message || e);
@@ -181,7 +184,12 @@ async function fetchSenderRefsFromNP(apiKey) {
     throw new Error("Не вдалося отримати AddressRef/CityRef відправника з НП");
   }
 
-  let phoneFromContact = contact?.Phones?.split(",")?.[0] || contact?.Phone || sender?.Phone || "";
+  let phoneFromContact =
+    contact?.Phones?.split(",")?.[0] ||
+    contact?.Phone ||
+    sender?.Phone ||
+    process.env.NP_SENDERS_PHONE ||
+    "";
   let normalizedPhone = null;
   try {
     normalizedPhone = normalizeSenderPhone(phoneFromContact);
@@ -194,8 +202,8 @@ async function fetchSenderRefsFromNP(apiKey) {
   if (!contact?.Ref) {
     const created = await npPost(apiKey, "ContactPerson", "save", {
       CounterpartyRef: sender.Ref,
-      FirstName: sender?.FirstName || "Shopify",
-      LastName: sender?.LastName || sender?.Description || "Sender",
+      FirstName: sender?.FirstName || process.env.NP_SENDER_FIRSTNAME || "Shopify",
+      LastName: sender?.LastName || process.env.NP_SENDER_LASTNAME || sender?.Description || "Sender",
       Phone: normalizedPhone,
     });
     contact = created?.data?.[0] || null;
