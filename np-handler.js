@@ -705,6 +705,7 @@ async function ensureSenderContact(senderRef, phone, apiKey) {
   try {
     const contacts = await npPost(apiKey, "ContactPerson", "getContactPersons", {
       CounterpartyRef: senderRef,
+      Page: "1",
     });
     const contact = contacts?.data?.[0];
     if (contact?.Ref) {
@@ -738,6 +739,28 @@ async function ensureSenderContact(senderRef, phone, apiKey) {
 
   if (!newRef) {
     const errText = creationErrors.join(", ") || JSON.stringify(created);
+
+    // If NP says contact already exists — re-read contacts and pick first
+    if (/already exist/i.test(errText)) {
+      try {
+        const contacts = await npPost(apiKey, "ContactPerson", "getContactPersons", {
+          CounterpartyRef: senderRef,
+          Page: "1",
+        });
+        const contact = contacts?.data?.[0];
+        if (contact?.Ref) {
+          const phoneFound =
+            contact?.Phones?.split(",")?.[0] ||
+            contact?.Phone ||
+            normalizedPhone ||
+            DEFAULT_SENDER_PHONE;
+          return { contactRef: contact.Ref, phone: normalizeSafe(phoneFound) };
+        }
+      } catch (e) {
+        console.warn("⚠️ Повторний пошук контакту відправника не вдався:", e?.message || e);
+      }
+    }
+
     throw new Error(`Не вдалося створити ContactSender у НП: ${errText}`);
   }
 
