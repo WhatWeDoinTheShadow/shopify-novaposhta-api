@@ -13,7 +13,7 @@
     "express": "^4.21.1",
     "dotenv": "^16.4.5",
     "json2csv": "6.0.0-alpha.2",
-    "ipp": "^2.4.0"
+    "ipp": "^2.1.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
