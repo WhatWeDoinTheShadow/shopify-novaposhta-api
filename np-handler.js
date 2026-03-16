@@ -2,6 +2,7 @@ import axios from "axios";
 import fs from "fs";
 import path from "path";
 import ipp from "ipp";
+import { execFile } from "child_process";
 
 // =======================
 // ENV
@@ -952,6 +953,23 @@ async function printLabel(pdfPath, ttnNumber) {
 }
 
 // =======================
+// CUPS lp printing (local)
+// =======================
+function printViaCups(pdfPath) {
+  const printer = process.env.LP_PRINTER || "Xprinter_IPP";
+  return new Promise((resolve, reject) => {
+    execFile("lp", ["-d", printer, pdfPath], { timeout: 15000 }, (err, stdout, stderr) => {
+      if (err) {
+        console.warn("⚠️ CUPS lp failed:", err?.message || err, stderr || "");
+        return reject(err);
+      }
+      console.log("🖨️ CUPS lp:", stdout.trim());
+      resolve();
+    });
+  });
+}
+
+// =======================
 // MAIN HANDLER
 // =======================
 export async function handleNovaPoshta(req, res) {
@@ -1272,7 +1290,15 @@ export async function handleNovaPoshta(req, res) {
       console.log("✅ Shopify saved TTN/label:", fullLabelUrl);
     }
 
-    // 7) mark processed
+    // 7) print locally via CUPS (preferred) or IPP
+    try {
+      await printViaCups(pdfPath);
+    } catch (e) {
+      console.warn("⚠️ CUPS print failed, trying IPP (if configured)", e?.message || e);
+      await printLabel(pdfPath, ttnNumber);
+    }
+
+    // 8) mark processed
     printedOrders[orderKey] = Date.now();
     fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
