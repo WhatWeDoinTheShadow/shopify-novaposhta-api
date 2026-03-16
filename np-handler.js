@@ -722,16 +722,24 @@ async function ensureSenderContact(senderRef, phone, apiKey) {
   // create contact
   const firstName = process.env.NP_SENDER_FIRSTNAME || "Sender";
   const lastName = process.env.NP_SENDER_LASTNAME || "Shopify";
+  const middleName = process.env.NP_SENDER_MIDDLENAME || "Auto";
   const normalizedPhone = normalizeSafe(phone);
 
   const created = await npPost(apiKey, "ContactPerson", "save", {
     CounterpartyRef: senderRef,
     FirstName: firstName,
     LastName: lastName,
+    MiddleName: middleName,
     Phone: normalizedPhone,
   });
+
+  const creationErrors = Array.isArray(created?.errors) ? created.errors : [];
   const newRef = created?.data?.[0]?.Ref || null;
-  if (!newRef) throw new Error("Не вдалося створити ContactSender у НП");
+
+  if (!newRef) {
+    const errText = creationErrors.join(", ") || JSON.stringify(created);
+    throw new Error(`Не вдалося створити ContactSender у НП: ${errText}`);
+  }
 
   return { contactRef: newRef, phone: normalizedPhone };
 }
