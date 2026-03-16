@@ -689,7 +689,17 @@ async function findWarehouseRefAny(warehouseNumber, cityRef, apiKey) {
 
 // Ensure sender contact exists; create if missing
 async function ensureSenderContact(senderRef, phone, apiKey) {
-  if (!senderRef) return { contactRef: null, phone };
+  if (!senderRef) {
+    throw new Error("SenderRef is missing; cannot create ContactSender");
+  }
+
+  const normalizeSafe = (p) => {
+    try {
+      return normalizeSenderPhone(p);
+    } catch (_) {
+      return DEFAULT_SENDER_PHONE;
+    }
+  };
 
   // try get existing contact
   try {
@@ -703,13 +713,7 @@ async function ensureSenderContact(senderRef, phone, apiKey) {
         contact?.Phone ||
         phone ||
         DEFAULT_SENDER_PHONE;
-      let normalized = phoneFound;
-      try {
-        normalized = normalizeSenderPhone(phoneFound);
-      } catch (_) {
-        normalized = DEFAULT_SENDER_PHONE;
-      }
-      return { contactRef: contact.Ref, phone: normalized };
+      return { contactRef: contact.Ref, phone: normalizeSafe(phoneFound) };
     }
   } catch (e) {
     console.warn("⚠️ Не вдалося отримати контакт відправника:", e?.message || e);
@@ -718,27 +722,18 @@ async function ensureSenderContact(senderRef, phone, apiKey) {
   // create contact
   const firstName = process.env.NP_SENDER_FIRSTNAME || "Sender";
   const lastName = process.env.NP_SENDER_LASTNAME || "Shopify";
-  let normalizedPhone = phone;
-  try {
-    normalizedPhone = normalizeSenderPhone(phone);
-  } catch (_) {
-    normalizedPhone = DEFAULT_SENDER_PHONE;
-  }
+  const normalizedPhone = normalizeSafe(phone);
 
-  try {
-    const created = await npPost(apiKey, "ContactPerson", "save", {
-      CounterpartyRef: senderRef,
-      FirstName: firstName,
-      LastName: lastName,
-      Phone: normalizedPhone,
-    });
-    const newRef = created?.data?.[0]?.Ref || null;
-    if (newRef) return { contactRef: newRef, phone: normalizedPhone };
-  } catch (e) {
-    console.warn("⚠️ Не вдалося створити контакт відправника:", e?.message || e);
-  }
+  const created = await npPost(apiKey, "ContactPerson", "save", {
+    CounterpartyRef: senderRef,
+    FirstName: firstName,
+    LastName: lastName,
+    Phone: normalizedPhone,
+  });
+  const newRef = created?.data?.[0]?.Ref || null;
+  if (!newRef) throw new Error("Не вдалося створити ContactSender у НП");
 
-  return { contactRef: null, phone: normalizedPhone };
+  return { contactRef: newRef, phone: normalizedPhone };
 }
 
 // =======================
