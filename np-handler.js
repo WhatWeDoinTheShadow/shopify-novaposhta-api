@@ -816,12 +816,22 @@ async function createMonoInvoice(order, baseUrl) {
   const amountInCents = Math.max(0, Math.round(total * 100));
 
   const basketOrder = (order?.line_items || []).map((item) => {
-    const lineTotal = parseFloat(item?.price || "0") * Number(item?.quantity || 0);
+    const code =
+      item?.sku ||
+      item?.variant_id ||
+      item?.product_id ||
+      item?.fulfillment_service ||
+      item?.vendor ||
+      item?.name ||
+      order?.id ||
+      "SKU";
+
+    const lineTotal = parseFloat(item?.price || order?.total_price || "0") * Number(item?.quantity || 1);
     return {
       name: String(item?.name || "Товар").slice(0, 128),
-      qty: Number(item?.quantity || 0),
+      qty: Number(item?.quantity || 1),
       sum: Math.max(0, Math.round(lineTotal * 100)),
-      code: String(item?.product_id || item?.sku || item?.variant_id || "").slice(0, 64),
+      code: String(code).slice(0, 64),
     };
   });
 
