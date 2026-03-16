@@ -210,6 +210,21 @@ async function fetchSenderRefsFromNP(apiKey) {
     }
   }
 
+  // If still missing, attempt global search by warehouse number (can back-fill cityRef)
+  if (!addressRef) {
+    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || "31";
+    try {
+      const { ref, cityRef: derivedCity } = await findWarehouseRefAny(whNum, cityRef, apiKey);
+      if (ref) {
+        addressRef = ref;
+        if (!cityRef && derivedCity) cityRef = derivedCity;
+        console.log("🏤 Sender AddressRef знайдено глобально за номером:", whNum, ref, "city:", cityRef);
+      }
+    } catch (e) {
+      console.warn("⚠️ Глобальний пошук складу не вдався:", e?.message || e);
+    }
+  }
+
   if (!addressRef || !cityRef) {
     throw new Error("Не вдалося отримати AddressRef/CityRef відправника з НП");
   }
@@ -638,6 +653,24 @@ async function findWarehouseRef(warehouseName, cityRef, apiKey) {
 
   const exact = list.find((w) => String(w?.Number || "") === String(num));
   return exact?.Ref || list[0]?.Ref || null;
+}
+
+// Global warehouse search (can work without CityRef). Returns { ref, cityRef }.
+async function findWarehouseRefAny(warehouseNumber, cityRef, apiKey) {
+  const params = {
+    FindByString: String(warehouseNumber || ""),
+    Limit: "20",
+  };
+  if (cityRef) params.CityRef = cityRef;
+
+  const data = await npPost(apiKey, "AddressGeneral", "getWarehouses", params);
+  const list = Array.isArray(data?.data) ? data.data : [];
+  if (!list.length) return { ref: null, cityRef: null };
+
+  const byNum = list.find((w) => String(w?.Number || "") === String(warehouseNumber));
+  const chosen = byNum || list[0];
+
+  return { ref: chosen?.Ref || null, cityRef: chosen?.CityRef || cityRef || null };
 }
 
 // =======================
