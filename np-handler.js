@@ -141,14 +141,20 @@ async function fetchSenderRefsFromNP(apiKey) {
     const addr = addrs?.data?.find((a) => a?.AddressRef || a?.Ref) || addrs?.data?.[0];
     console.log("🏢 NP addresses (first):", addr);
     addressRef = addr?.AddressRef || addr?.Ref || null;
-    cityRef = addr?.CityRef || addr?.SettlementRef || sender?.CityRef || sender?.City || null;
+    cityRef =
+      addr?.CityRef ||
+      addr?.SettlementRef ||
+      sender?.CityRef ||
+      sender?.City ||
+      addr?.MainDescription ||
+      null;
   } catch (e) {
     console.warn("⚠️ getCounterpartyAddresses failed:", e?.message || e);
   }
 
   // Derive CityRef if missing — prefer explicit env hint
   if (!cityRef) {
-    const envCity = process.env.NP_SENDER_CITY_NAME;
+    const envCity = process.env.NP_SENDER_CITY_NAME || process.env.NP_SENDER_CITY;
     const cityGuess =
       envCity ||
       sender?.CityDescription ||
@@ -177,6 +183,23 @@ async function fetchSenderRefsFromNP(apiKey) {
       }
     } catch (e) {
       console.warn("⚠️ Не вдалося отримати склад для відправника:", e?.message || e);
+    }
+  }
+
+  // Final safety: still no addressRef but cityRef exists — take the first warehouse of the city
+  if (!addressRef && cityRef) {
+    try {
+      const data = await npPost(apiKey, "AddressGeneral", "getWarehouses", {
+        CityRef: cityRef,
+        Limit: "10",
+      });
+      const first = Array.isArray(data?.data) ? data.data[0] : null;
+      if (first?.Ref) {
+        addressRef = first.Ref;
+        console.log("🏤 Sender AddressRef авто-взято першим зі списку міста:", addressRef);
+      }
+    } catch (e) {
+      console.warn("⚠️ Не вдалося отримати перший склад міста:", e?.message || e);
     }
   }
 

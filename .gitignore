@@ -8,3 +8,4 @@ labels
 *.pdf
 mono_invoices.json
 printed_orders.json
+.git-credentials
