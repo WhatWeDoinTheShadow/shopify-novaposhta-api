@@ -1007,13 +1007,10 @@ export async function handleNovaPoshta(req, res) {
     // IMPORTANT: prefer BASE_URL for public links (Render)
     const baseUrl = BASE_URL || `https://${req.get("host")}`;
 
-    // ========= RULE: LOCKER + COD => NO TTN =========
-    if (locker && cod) {
-      console.log("⛔ Поштомат + COD: ТТН НЕ створюємо. Створюємо payment link і позначаємо Shopify.");
-
-      let paymentUrl = null;
-      let monoInvoiceId = null;
-
+    // Try to create payment link (Monobank) always, щоб мати Payment Link у Shopify
+    let paymentUrl = null;
+    let monoInvoiceId = null;
+    if (process.env.MONO_MERCHANT_TOKEN) {
       try {
         const mono = await createMonoInvoice(order, baseUrl);
         monoInvoiceId = mono?.invoiceId || null;
@@ -1029,6 +1026,11 @@ export async function handleNovaPoshta(req, res) {
       } catch (e) {
         console.error("🚨 Monobank create invoice failed:", e?.response?.data || e?.message || e);
       }
+    }
+
+    // ========= RULE: LOCKER + COD => NO TTN =========
+    if (locker && cod) {
+      console.log("⛔ Поштомат + COD: ТТН НЕ створюємо. Створюємо payment link і позначаємо Shopify.");
 
       if (SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
         const reason =
@@ -1119,29 +1121,7 @@ export async function handleNovaPoshta(req, res) {
 
     if (!CONTACT_RECIPIENT_REF) throw new Error("Не вдалося отримати CONTACT_RECIPIENT_REF");
 
-    // 3) payment link (тільки якщо НЕ COD)
-    let paymentUrl = null;
-    let monoInvoiceId = null;
-
-    if (!cod) {
-      try {
-        const mono = await createMonoInvoice(order, baseUrl);
-        monoInvoiceId = mono?.invoiceId || null;
-        paymentUrl = mono?.pageUrl || null;
-
-        if (monoInvoiceId && paymentUrl) {
-          saveMonoInvoice(monoInvoiceId, order, paymentUrl);
-          console.log("✅ Monobank invoice:", monoInvoiceId);
-          console.log("✅ Payment URL:", paymentUrl);
-        } else {
-          console.warn("⚠️ Monobank не повернув invoiceId/pageUrl");
-        }
-      } catch (e) {
-        console.error("🚨 Monobank create invoice failed:", e?.response?.data || e?.message || e);
-      }
-    }
-
-    // Always push payment link to Shopify if exists
+    // 3) Always push payment link to Shopify if exists
     if (paymentUrl && SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
       await shopifySetMetafields(order.id, [
         { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
@@ -1272,11 +1252,18 @@ export async function handleNovaPoshta(req, res) {
       await shopifySetMetafields(order.id, [
         { namespace: "custom", key: "ttn_number", type: "single_line_text_field", value: String(ttnNumber) },
         { namespace: "custom", key: "ttn_label_url", type: "url", value: fullLabelUrl },
+        { namespace: "custom", key: "nova_poshta_ttn_pdf", type: "url", value: fullLabelUrl },
         { namespace: "custom", key: "np_point_type", type: "single_line_text_field", value: locker ? "locker" : "branch" },
         { namespace: "custom", key: "np_point_number", type: "single_line_text_field", value: String(npPointNumber || "") },
         { namespace: "custom", key: "np_seat_weight", type: "number_decimal", value: String(PARCEL.weightKg) },
         { namespace: "custom", key: "np_seat_dims_cm", type: "single_line_text_field", value: `${PARCEL.lengthCm}x${PARCEL.widthCm}x${PARCEL.heightCm}` },
         { namespace: "custom", key: "np_seat_volume_m3", type: "number_decimal", value: String(calcVolumeM3(PARCEL)) },
+        ...(paymentUrl
+          ? [
+              { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
+              { namespace: "custom", key: "mono_invoice_id", type: "single_line_text_field", value: String(monoInvoiceId || "") },
+            ]
+          : []),
       ]);
       console.log("✅ Shopify saved TTN/label:", fullLabelUrl);
     }
