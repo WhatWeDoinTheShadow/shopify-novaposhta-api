@@ -687,6 +687,60 @@ async function findWarehouseRefAny(warehouseNumber, cityRef, apiKey) {
   return { ref: chosen?.Ref || null, cityRef: chosen?.CityRef || cityRef || null };
 }
 
+// Ensure sender contact exists; create if missing
+async function ensureSenderContact(senderRef, phone, apiKey) {
+  if (!senderRef) return { contactRef: null, phone };
+
+  // try get existing contact
+  try {
+    const contacts = await npPost(apiKey, "ContactPerson", "getContactPersons", {
+      CounterpartyRef: senderRef,
+    });
+    const contact = contacts?.data?.[0];
+    if (contact?.Ref) {
+      const phoneFound =
+        contact?.Phones?.split(",")?.[0] ||
+        contact?.Phone ||
+        phone ||
+        DEFAULT_SENDER_PHONE;
+      let normalized = phoneFound;
+      try {
+        normalized = normalizeSenderPhone(phoneFound);
+      } catch (_) {
+        normalized = DEFAULT_SENDER_PHONE;
+      }
+      return { contactRef: contact.Ref, phone: normalized };
+    }
+  } catch (e) {
+    console.warn("⚠️ Не вдалося отримати контакт відправника:", e?.message || e);
+  }
+
+  // create contact
+  const firstName = process.env.NP_SENDER_FIRSTNAME || "Sender";
+  const lastName = process.env.NP_SENDER_LASTNAME || "Shopify";
+  let normalizedPhone = phone;
+  try {
+    normalizedPhone = normalizeSenderPhone(phone);
+  } catch (_) {
+    normalizedPhone = DEFAULT_SENDER_PHONE;
+  }
+
+  try {
+    const created = await npPost(apiKey, "ContactPerson", "save", {
+      CounterpartyRef: senderRef,
+      FirstName: firstName,
+      LastName: lastName,
+      Phone: normalizedPhone,
+    });
+    const newRef = created?.data?.[0]?.Ref || null;
+    if (newRef) return { contactRef: newRef, phone: normalizedPhone };
+  } catch (e) {
+    console.warn("⚠️ Не вдалося створити контакт відправника:", e?.message || e);
+  }
+
+  return { contactRef: null, phone: normalizedPhone };
+}
+
 // =======================
 // Seats block for NP validator
 // - Use STRINGS only
@@ -1008,6 +1062,16 @@ export async function handleNovaPoshta(req, res) {
 
     // 4) Create TTN (Seats FIX with fallback)
     const afterPaymentAmount = cod ? String(order?.total_price || "0") : "0";
+    let contactSenderRef = CONTACT_SENDER_REF || null;
+    let senderPhone = SENDERS_PHONE;
+
+    if (!contactSenderRef) {
+      const ensured = await ensureSenderContact(SENDER_REF, SENDERS_PHONE, process.env.NP_API_KEY);
+      contactSenderRef = ensured.contactRef;
+      senderPhone = ensured.phone;
+      console.log("👥 ContactSender auto:", { contactSenderRef, senderPhone });
+    }
+
     const { seatsA, seatsB } = buildSeatsBlocksFixed();
 
     const baseProps = {
@@ -1021,9 +1085,9 @@ export async function handleNovaPoshta(req, res) {
 
       CitySender: SENDER_CITY_REF,
       SenderAddress: SENDER_ADDRESS_REF,
-      ContactSender: CONTACT_SENDER_REF,
+      ContactSender: contactSenderRef,
       Sender: SENDER_REF,
-      SendersPhone: SENDERS_PHONE,
+      SendersPhone: senderPhone,
 
       CityRecipient: cityRef,
       RecipientAddress: warehouseRef,
