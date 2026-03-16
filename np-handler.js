@@ -940,23 +940,14 @@ async function printViaIPP(pdfPath, ttnNumber) {
 
 // Prefer IPP, then fallback to PrintNode (if configured)
 async function printLabel(pdfPath, ttnNumber) {
+  if (!process.env.IPP_PRINTER_URL) {
+    console.warn("ℹ️ Друк пропущено: не задано IPP_PRINTER_URL");
+    return;
+  }
   try {
     await printViaIPP(pdfPath, ttnNumber);
-    return;
   } catch (e) {
-    if (process.env.IPP_PRINTER_URL) {
-      console.warn("⚠️ IPP print failed, fallback to PrintNode:", e?.message || e);
-    }
-  }
-
-  try {
-    await printViaPrintNode(pdfPath, ttnNumber);
-  } catch (e) {
-    console.warn("⚠️ PrintNode print failed:", e?.message || e);
-  }
-
-  if (!process.env.IPP_PRINTER_URL && (!process.env.PRINTNODE_API_KEY || !process.env.PRINTNODE_PRINTER_ID)) {
-    console.warn("ℹ️ Друк пропущено: не задано IPP_PRINTER_URL та PrintNode ключ/принтер.");
+    console.warn("⚠️ IPP print failed:", e?.message || e);
   }
 }
 
@@ -1281,10 +1272,7 @@ export async function handleNovaPoshta(req, res) {
       console.log("✅ Shopify saved TTN/label:", fullLabelUrl);
     }
 
-    // 7) PrintNode
-    await printViaPrintNode(pdfPath, ttnNumber);
-
-    // 8) mark processed
+    // 7) mark processed
     printedOrders[orderKey] = Date.now();
     fs.writeFileSync(PRINTED_DB, JSON.stringify(printedOrders, null, 2));
 
