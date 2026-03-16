@@ -1,6 +1,7 @@
 import axios from "axios";
 import fs from "fs";
 import path from "path";
+import ipp from "ipp";
 
 // =======================
 // ENV
@@ -876,6 +877,58 @@ async function printViaPrintNode(pdfPath, ttnNumber) {
   );
 
   console.log("✅ Етикетка відправлена на друк через PrintNode");
+}
+
+// =======================
+// IPP printing (direct to printer) — preferred if IPP_PRINTER_URL is set
+// =======================
+async function printViaIPP(pdfPath, ttnNumber) {
+  const url = process.env.IPP_PRINTER_URL;
+  if (!url) return;
+
+  const data = fs.readFileSync(pdfPath);
+  const printer = ipp.Printer(url);
+
+  await new Promise((resolve, reject) => {
+    printer.execute(
+      "Print-Job",
+      {
+        "operation-attributes-tag": {
+          "requesting-user-name": "shopify-np",
+          "job-name": `NovaPoshta ${ttnNumber}`,
+          "document-format": "application/pdf",
+        },
+        data,
+      },
+      (err, res) => {
+        if (err) return reject(err);
+        if (res?.statusCode && res.statusCode >= 400) {
+          return reject(new Error(`IPP status ${res.statusCode}`));
+        }
+        resolve(res);
+      }
+    );
+  });
+
+  console.log("✅ Етикетка відправлена на друк через IPP:", url);
+}
+
+// Prefer IPP, then fallback to PrintNode (if configured)
+async function printLabel(pdfPath, ttnNumber) {
+  try {
+    await printViaIPP(pdfPath, ttnNumber);
+    return;
+  } catch (e) {
+    if (process.env.IPP_PRINTER_URL) {
+      console.warn("⚠️ IPP print failed, fallback to PrintNode:", e?.message || e);
+    }
+  }
+
+  try {
+    await printLabel(pdfPath, ttnNumber);
+  } catch (e) {
+    console.warn("⚠️ PrintNode print failed:", e?.message || e);
+  }
 }
 
 // =======================
