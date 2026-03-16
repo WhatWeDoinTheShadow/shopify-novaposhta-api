@@ -160,7 +160,8 @@ async function fetchSenderRefsFromNP(apiKey) {
       sender?.CityDescription,
       sender?.Description,
       sender?.OwnerName,
-      "Київ", // sane default fallback
+      "Львів", // primary fallback per client setup
+      "Київ", // secondary generic fallback
     ].filter(Boolean);
 
     for (const cityGuess of cityCandidates) {
@@ -179,7 +180,7 @@ async function fetchSenderRefsFromNP(apiKey) {
 
   // If addressRef missing but cityRef exists — use warehouse number hint or first warehouse
   if (!addressRef && cityRef) {
-    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || "1";
+    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || "31"; // default to LVIV #31 per client
     const whName = `Відділення №${whNum}`;
     try {
       const ref = await findWarehouseRef(whName, cityRef, apiKey);
