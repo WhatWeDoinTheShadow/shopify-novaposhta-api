@@ -701,10 +701,10 @@ async function ensureSenderContact(senderRef, phone, apiKey) {
     }
   };
 
-  // try get existing contact
-  try {
-    const contacts = await npPost(apiKey, "ContactPerson", "getContactPersons", {
-      CounterpartyRef: senderRef,
+  // try get existing contact (Counterparty -> getCounterpartyContactPersons)
+  const pickFirstContact = async () => {
+    const contacts = await npPost(apiKey, "Counterparty", "getCounterpartyContactPersons", {
+      Ref: senderRef,
       Page: "1",
     });
     const contact = contacts?.data?.[0];
@@ -716,6 +716,12 @@ async function ensureSenderContact(senderRef, phone, apiKey) {
         DEFAULT_SENDER_PHONE;
       return { contactRef: contact.Ref, phone: normalizeSafe(phoneFound) };
     }
+    return null;
+  };
+
+  try {
+    const existing = await pickFirstContact();
+    if (existing) return existing;
   } catch (e) {
     console.warn("⚠️ Не вдалося отримати контакт відправника:", e?.message || e);
   }
@@ -743,19 +749,8 @@ async function ensureSenderContact(senderRef, phone, apiKey) {
     // If NP says contact already exists — re-read contacts and pick first
     if (/already exist/i.test(errText)) {
       try {
-        const contacts = await npPost(apiKey, "ContactPerson", "getContactPersons", {
-          CounterpartyRef: senderRef,
-          Page: "1",
-        });
-        const contact = contacts?.data?.[0];
-        if (contact?.Ref) {
-          const phoneFound =
-            contact?.Phones?.split(",")?.[0] ||
-            contact?.Phone ||
-            normalizedPhone ||
-            DEFAULT_SENDER_PHONE;
-          return { contactRef: contact.Ref, phone: normalizeSafe(phoneFound) };
-        }
+        const existing = await pickFirstContact();
+        if (existing) return existing;
       } catch (e) {
         console.warn("⚠️ Повторний пошук контакту відправника не вдався:", e?.message || e);
       }
