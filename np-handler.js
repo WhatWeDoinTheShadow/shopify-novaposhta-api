@@ -895,7 +895,10 @@ async function printViaPrintNode(pdfPath, ttnNumber) {
 // =======================
 async function printViaIPP(pdfPath, ttnNumber) {
   const url = process.env.IPP_PRINTER_URL;
-  if (!url) return;
+  if (!url) {
+    console.warn("ℹ️ IPP: пропущено, немає IPP_PRINTER_URL");
+    return;
+  }
 
   const data = fs.readFileSync(pdfPath);
   const printer = ipp.Printer(url);
