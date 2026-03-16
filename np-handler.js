@@ -155,16 +155,22 @@ async function fetchSenderRefsFromNP(apiKey) {
   // Derive CityRef if missing — prefer explicit env hint
   if (!cityRef) {
     const envCity = process.env.NP_SENDER_CITY_NAME || process.env.NP_SENDER_CITY;
-    const cityGuess =
-      envCity ||
-      sender?.CityDescription ||
-      sender?.Description ||
-      sender?.OwnerName ||
-      "";
-    if (cityGuess) {
+    const cityCandidates = [
+      envCity,
+      sender?.CityDescription,
+      sender?.Description,
+      sender?.OwnerName,
+      "Київ", // sane default fallback
+    ].filter(Boolean);
+
+    for (const cityGuess of cityCandidates) {
       try {
         const derived = await findCityRef(cityGuess, apiKey);
-        if (derived) cityRef = derived;
+        if (derived) {
+          cityRef = derived;
+          console.log("🏙️ Sender CityRef авто-деривовано з:", cityGuess, "=>", cityRef);
+          break;
+        }
       } catch (e) {
         console.warn("⚠️ Не вдалося деривувати CityRef із опису:", cityGuess, e?.message || e);
       }
@@ -206,6 +212,17 @@ async function fetchSenderRefsFromNP(apiKey) {
   if (!addressRef || !cityRef) {
     throw new Error("Не вдалося отримати AddressRef/CityRef відправника з НП");
   }
+
+  // Cache found values even if from defaults
+  cachedSenderRefs = {
+    SENDER_CITY_REF: cityRef,
+    SENDER_ADDRESS_REF: addressRef,
+    SENDER_REF: sender.Ref,
+    CONTACT_SENDER_REF: contact?.Ref || contact?.ContactPerson?.Ref || null,
+    SENDERS_PHONE: normalizedPhone,
+  };
+
+  return cachedSenderRefs;
 
   let phoneFromContact =
     contact?.Phones?.split(",")?.[0] ||
