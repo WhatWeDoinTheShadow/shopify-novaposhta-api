@@ -56,6 +56,11 @@ const PARCEL = {
 // Sender refs cache (to avoid repeating NP lookups)
 // =======================
 let cachedSenderRefs = null;
+const DEFAULT_SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626"; // Львів
+const DEFAULT_SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d"; // Відділення №31, Львів
+const DEFAULT_SENDER_CITY_NAME = "Львів";
+const DEFAULT_SENDER_WAREHOUSE_NUMBER = "31";
+const DEFAULT_SENDER_PHONE = "380501112233";
 
 function normalizeSenderPhone(raw) {
   let p = String(raw || "").replace(/\D/g, "");
@@ -74,16 +79,15 @@ function getSenderRefsFromEnv() {
   if (cachedSenderRefs) return cachedSenderRefs;
 
   const required = {
-    NP_SENDER_CITY_REF: process.env.NP_SENDER_CITY_REF,
-    NP_SENDER_ADDRESS_REF: process.env.NP_SENDER_ADDRESS_REF,
+    NP_SENDER_CITY_REF: process.env.NP_SENDER_CITY_REF || DEFAULT_SENDER_CITY_REF,
+    NP_SENDER_ADDRESS_REF: process.env.NP_SENDER_ADDRESS_REF || DEFAULT_SENDER_ADDRESS_REF,
     NP_SENDER_REF: process.env.NP_SENDER_REF,
     NP_CONTACT_SENDER_REF: process.env.NP_CONTACT_SENDER_REF,
-    NP_SENDERS_PHONE: process.env.NP_SENDERS_PHONE,
+    NP_SENDERS_PHONE: process.env.NP_SENDERS_PHONE || DEFAULT_SENDER_PHONE,
   };
 
-  const missing = Object.entries(required)
-    .filter(([, v]) => !v)
-    .map(([k]) => k);
+  const missing = ["NP_SENDER_CITY_REF", "NP_SENDER_ADDRESS_REF", "NP_SENDERS_PHONE"]
+    .filter((k) => !required[k]);
 
   if (missing.length) {
     // If env is incomplete — try to auto-fetch from NP cabinet
@@ -95,8 +99,8 @@ function getSenderRefsFromEnv() {
   cachedSenderRefs = {
     SENDER_CITY_REF: required.NP_SENDER_CITY_REF,
     SENDER_ADDRESS_REF: required.NP_SENDER_ADDRESS_REF,
-    SENDER_REF: required.NP_SENDER_REF,
-    CONTACT_SENDER_REF: required.NP_CONTACT_SENDER_REF,
+    SENDER_REF: required.NP_SENDER_REF || null,
+    CONTACT_SENDER_REF: required.NP_CONTACT_SENDER_REF || null,
     SENDERS_PHONE: normalizedPhone,
   };
 
@@ -154,13 +158,13 @@ async function fetchSenderRefsFromNP(apiKey) {
 
   // Derive CityRef if missing — prefer explicit env hint
   if (!cityRef) {
-    const envCity = process.env.NP_SENDER_CITY_NAME || process.env.NP_SENDER_CITY;
+    const envCity = process.env.NP_SENDER_CITY_NAME || process.env.NP_SENDER_CITY || DEFAULT_SENDER_CITY_NAME;
     const cityCandidates = [
       envCity,
       sender?.CityDescription,
       sender?.Description,
       sender?.OwnerName,
-      "Львів", // primary fallback per client setup
+      DEFAULT_SENDER_CITY_NAME, // primary fallback per client setup
       "Київ", // secondary generic fallback
     ].filter(Boolean);
 
@@ -178,9 +182,14 @@ async function fetchSenderRefsFromNP(apiKey) {
     }
   }
 
+  if (!cityRef) {
+    cityRef = DEFAULT_SENDER_CITY_REF;
+    console.log("🏙️ Sender CityRef встановлено за замовчуванням (Львів):", cityRef);
+  }
+
   // If addressRef missing but cityRef exists — use warehouse number hint or first warehouse
   if (!addressRef && cityRef) {
-    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || "31"; // default to LVIV #31 per client
+    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || DEFAULT_SENDER_WAREHOUSE_NUMBER; // default to LVIV #31 per client
     const whName = `Відділення №${whNum}`;
     try {
       const ref = await findWarehouseRef(whName, cityRef, apiKey);
@@ -212,7 +221,7 @@ async function fetchSenderRefsFromNP(apiKey) {
 
   // If still missing, attempt global search by warehouse number (can back-fill cityRef)
   if (!addressRef) {
-    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || "31";
+    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || DEFAULT_SENDER_WAREHOUSE_NUMBER;
     try {
       const { ref, cityRef: derivedCity } = await findWarehouseRefAny(whNum, cityRef, apiKey);
       if (ref) {
@@ -223,6 +232,11 @@ async function fetchSenderRefsFromNP(apiKey) {
     } catch (e) {
       console.warn("⚠️ Глобальний пошук складу не вдався:", e?.message || e);
     }
+  }
+
+  if (!addressRef) {
+    addressRef = DEFAULT_SENDER_ADDRESS_REF;
+    console.log("🏤 Sender AddressRef встановлено за замовчуванням (Львів №31):", addressRef);
   }
 
   if (!addressRef || !cityRef) {
