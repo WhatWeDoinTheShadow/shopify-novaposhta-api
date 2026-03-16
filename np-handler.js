@@ -861,9 +861,20 @@ async function createMonoInvoice(order, baseUrl) {
 // PrintNode
 // =======================
 async function printViaPrintNode(pdfPath, ttnNumber) {
-  if (!process.env.PRINTNODE_API_KEY || !process.env.PRINTNODE_PRINTER_ID) return;
+  if (!process.env.PRINTNODE_API_KEY || !process.env.PRINTNODE_PRINTER_ID) {
+    console.warn("ℹ️ PrintNode: пропущено, немає PRINTNODE_API_KEY або PRINTNODE_PRINTER_ID");
+    return;
+  }
 
   const pdfBase64 = fs.readFileSync(pdfPath).toString("base64");
+  console.log(
+    "🖨️  PrintNode: надсилаю",
+    pdfPath,
+    "bytes:",
+    pdfBase64.length,
+    "printerId:",
+    process.env.PRINTNODE_PRINTER_ID
+  );
   await axios.post(
     "https://api.printnode.com/printjobs",
     {
@@ -888,6 +899,7 @@ async function printViaIPP(pdfPath, ttnNumber) {
 
   const data = fs.readFileSync(pdfPath);
   const printer = ipp.Printer(url);
+  console.log("🖨️  IPP: друк", pdfPath, "bytes:", data.length, "url:", url);
 
   await new Promise((resolve, reject) => {
     printer.execute(
@@ -925,9 +937,13 @@ async function printLabel(pdfPath, ttnNumber) {
   }
 
   try {
-    await printLabel(pdfPath, ttnNumber);
+    await printViaPrintNode(pdfPath, ttnNumber);
   } catch (e) {
     console.warn("⚠️ PrintNode print failed:", e?.message || e);
+  }
+
+  if (!process.env.IPP_PRINTER_URL && (!process.env.PRINTNODE_API_KEY || !process.env.PRINTNODE_PRINTER_ID)) {
+    console.warn("ℹ️ Друк пропущено: не задано IPP_PRINTER_URL та PrintNode ключ/принтер.");
   }
 }
 
