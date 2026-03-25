@@ -387,8 +387,8 @@ function normalizePhone(rawPhone) {
   if (p.length > 12) p = p.slice(0, 12);
 
   if (!/^380\d{9}$/.test(p)) {
-    console.warn(`⚠️ Невірний номер телефону: ${p} (${rawPhone}), ставлю тестовий`);
-    p = "380501112233";
+    // Жорстко відхиляємо, щоб не друкувати тестові ТТН
+    throw new Error(`Invalid recipient phone: ${rawPhone}`);
   }
   return p;
 }
