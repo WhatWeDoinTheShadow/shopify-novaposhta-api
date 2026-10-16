@@ -59,9 +59,9 @@ const PARCEL = {
 // =======================
 let cachedSenderRefs = null;
 const DEFAULT_SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626"; // Львів
-const DEFAULT_SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d"; // Відділення №31, Львів
+const DEFAULT_SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d"; // Відділення №120, Львів
 const DEFAULT_SENDER_CITY_NAME = "Львів";
-const DEFAULT_SENDER_WAREHOUSE_NUMBER = "31";
+const DEFAULT_SENDER_WAREHOUSE_NUMBER = "120";
 const DEFAULT_SENDER_PHONE = "380501112233";
 
 function normalizeSenderPhone(raw) {
@@ -191,7 +191,7 @@ async function fetchSenderRefsFromNP(apiKey) {
 
   // If addressRef missing but cityRef exists — use warehouse number hint or first warehouse
   if (!addressRef && cityRef) {
-    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || DEFAULT_SENDER_WAREHOUSE_NUMBER; // default to LVIV #31 per client
+    const whNum = process.env.NP_SENDER_WAREHOUSE_NUMBER || DEFAULT_SENDER_WAREHOUSE_NUMBER; // default to LVIV #120 per client
     const whName = `Відділення №${whNum}`;
     try {
       const ref = await findWarehouseRef(whName, cityRef, apiKey);
@@ -238,7 +238,7 @@ async function fetchSenderRefsFromNP(apiKey) {
 
   if (!addressRef) {
     addressRef = DEFAULT_SENDER_ADDRESS_REF;
-    console.log("🏤 Sender AddressRef встановлено за замовчуванням (Львів №31):", addressRef);
+    console.log("🏤 Sender AddressRef встановлено за замовчуванням (Львів №120):", addressRef);
   }
 
   if (!addressRef || !cityRef) {
