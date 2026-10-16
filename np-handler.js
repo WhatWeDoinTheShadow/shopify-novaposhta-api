@@ -59,7 +59,7 @@ const PARCEL = {
 // =======================
 let cachedSenderRefs = null;
 const DEFAULT_SENDER_CITY_REF = "db5c88f5-391c-11dd-90d9-001a92567626"; // Львів
-const DEFAULT_SENDER_ADDRESS_REF = "c8025d1c-b36a-11e4-a77a-005056887b8d"; // Відділення №120, Львів
+const DEFAULT_SENDER_ADDRESS_REF = "c960207e-6892-11f0-9ad7-d4f5ef0df2b8"; // Відділення №120, Львів
 const DEFAULT_SENDER_CITY_NAME = "Львів";
 const DEFAULT_SENDER_WAREHOUSE_NUMBER = "120";
 const DEFAULT_SENDER_PHONE = "380501112233";
