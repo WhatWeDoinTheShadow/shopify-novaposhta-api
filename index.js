@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 import { handleNovaPoshta } from "./np-handler.js";
+import monoPayRouter from "./mono-pay.js";
 
 dotenv.config();
 
@@ -21,6 +22,10 @@ if (!fs.existsSync(LABELS_DIR)) fs.mkdirSync(LABELS_DIR);
 
 // роздаємо PDF з етикетками
 app.use("/labels", express.static(LABELS_DIR));
+
+// ========================== MONOBANK PAYMENT (customer-facing) ==========================
+// GET /pay/:orderId → redirect to Monobank payment page
+app.use(monoPayRouter);
 
 // ========================== HEALTHCHECK ==========================
 app.get("/", (req, res) => {

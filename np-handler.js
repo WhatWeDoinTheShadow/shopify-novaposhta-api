@@ -848,9 +848,9 @@ async function createMonoInvoice(order, baseUrl) {
       destination: `Оплата замовлення ${order?.name || ""}`.slice(0, 140),
       basketOrder,
     },
-    redirectUrl: `${baseUrl}/mono/payment/redirect`,
-    successUrl: `${baseUrl}/mono/payment/success`,
-    failUrl: `${baseUrl}/mono/payment/fail`,
+    redirectUrl: `${baseUrl}/mono/payment/redirect?order=${order?.id || ""}`,
+    successUrl: `${baseUrl}/mono/payment/success?order=${order?.id || ""}`,
+    failUrl: `${baseUrl}/mono/payment/fail?order=${order?.id || ""}`,
     webHookUrl: `${baseUrl}/api/mono/webhook`,
   };
 
@@ -1046,6 +1046,19 @@ export async function handleNovaPoshta(req, res) {
           saveMonoInvoice(monoInvoiceId, order, paymentUrl);
           console.log("✅ Monobank invoice:", monoInvoiceId);
           console.log("✅ Payment URL:", paymentUrl);
+
+          // Save link to Shopify right away so /pay/:orderId works even if NP steps fail later
+          if (SHOPIFY_STORE && SHOPIFY_ADMIN_TOKEN && order?.id) {
+            try {
+              await shopifySetMetafields(order.id, [
+                { namespace: "custom", key: "payment_link", type: "url", value: paymentUrl },
+                { namespace: "custom", key: "mono_invoice_id", type: "single_line_text_field", value: String(monoInvoiceId) },
+              ]);
+              console.log("✅ Shopify saved payment link (early)");
+            } catch (e) {
+              console.error("🚨 Shopify early payment link save failed:", e?.response?.data || e?.message || e);
+            }
+          }
         } else {
           console.warn("⚠️ Monobank не повернув invoiceId/pageUrl");
         }
