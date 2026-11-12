@@ -5,6 +5,7 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 import { handleNovaPoshta } from "./np-handler.js";
 import monoPayRouter from "./mono-pay.js";
+import monoWebhookRouter from "./mono-webhook.js";
 
 dotenv.config();
 
@@ -14,7 +15,14 @@ const __dirname = path.dirname(__filename);
 
 // ========================== INIT SERVER ==========================
 const app = express();
-app.use(express.json());
+// keep raw body for Monobank X-Sign verification
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
 // ========================== LABELS FOLDER ==========================
 const LABELS_DIR = path.resolve(__dirname, "./labels");
@@ -26,6 +34,9 @@ app.use("/labels", express.static(LABELS_DIR));
 // ========================== MONOBANK PAYMENT (customer-facing) ==========================
 // GET /pay/:orderId → redirect to Monobank payment page
 app.use(monoPayRouter);
+
+// POST /api/mono/webhook → mark Shopify order as paid
+app.use(monoWebhookRouter);
 
 // ========================== HEALTHCHECK ==========================
 app.get("/", (req, res) => {
