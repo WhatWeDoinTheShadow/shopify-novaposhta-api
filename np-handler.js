@@ -776,30 +776,34 @@ function buildSeatsBlocksFixed() {
   const weight = String(PARCEL.weightKg); // "0.3"
   const volume = String(calcVolumeM3(PARCEL)); // "0.00165"
 
+  // A: documented NP format (camelCase keys inside OptionsSeat)
   const seatsA = {
     SeatsAmount: "1",
     Weight: weight,
     VolumeGeneral: volume,
     OptionsSeat: [
       {
-        VolumetricWidth: w,
-        VolumetricHeight: h,
-        VolumetricLength: l,
-        Weight: weight,
+        volumetricVolume: volume,
+        volumetricWidth: w,
+        volumetricHeight: h,
+        volumetricLength: l,
+        weight: weight,
       },
     ],
   };
 
+  // B: legacy PascalCase fallback
   const seatsB = {
     SeatsAmount: "1",
     Weight: weight,
     VolumeGeneral: volume,
     OptionsSeat: [
       {
-        volumetricWidth: w,
-        volumetricHeight: h,
-        volumetricLength: l,
-        weight: weight,
+        VolumetricVolume: volume,
+        VolumetricWidth: w,
+        VolumetricHeight: h,
+        VolumetricLength: l,
+        Weight: weight,
       },
     ],
   };
@@ -1207,8 +1211,8 @@ export async function handleNovaPoshta(req, res) {
 
     if (!ttnRes?.success) {
       const errText = String((ttnRes?.errors || []).join(", "));
-      if (/OptionsSeat is empty/i.test(errText)) {
-        console.warn("⚠️ OptionsSeat rejected in A-format, retry with B-format...");
+      if (/OptionsSeat|Width|Height|Length|Weight|Volume/i.test(errText)) {
+        console.warn(`⚠️ Seats rejected in A-format (${errText}), retry with B-format...`);
         console.log("🧾 NP seatsB:", JSON.stringify(seatsB, null, 2));
 
         ttnRes = await npPost(process.env.NP_API_KEY, "InternetDocument", "save", {
